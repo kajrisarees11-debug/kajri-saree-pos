@@ -9,6 +9,13 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ducanh2912/next-pwa": "^10.2.9",
+    "csv-parse": "^7.0.2",
+    "framer-motion": "^13.1.0",
+    "idb": "^8.0.3",
+    "jose": "^6.2.9",
+    "lucide-react": "^1.31.0",
+    "mongoose": "^9.9.2",
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
