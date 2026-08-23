@@ -71,6 +71,7 @@ export default function LoginPage() {
                   className="w-full pl-12 pr-4 py-4 text-center text-2xl tracking-widest border-2 border-gray-200 rounded-xl focus:ring-4 focus:ring-primary/20 focus:border-primary outline-none transition-all font-mono"
                   placeholder="•••••"
                   autoFocus
+                  suppressHydrationWarning
                 />
               </div>
             </div>
@@ -79,6 +80,7 @@ export default function LoginPage() {
               type="submit"
               disabled={loading}
               className="w-full bg-primary hover:bg-primary-light text-white font-bold py-3 px-4 rounded-xl transition-colors mt-2 disabled:opacity-70 disabled:cursor-not-allowed shadow-md"
+              suppressHydrationWarning
             >
               {loading ? 'Authenticating...' : 'Secure Login'}
             </button>

@@ -9,9 +9,9 @@ export const metadata = {
 
 export default function POSLayout({ children }) {
   return (
-    <div className={`min-h-screen bg-gray-50 flex flex-col ${inter.className}`}>
+    <div className={`min-h-screen print:min-h-0 print:block bg-gray-50 flex flex-col ${inter.className}`}>
       {/* Top Bar for POS */}
-      <header className="h-14 bg-primary text-white flex items-center justify-between px-6 shadow-md z-10 shrink-0">
+      <header className="h-14 bg-primary text-white flex items-center justify-between px-6 shadow-md z-10 shrink-0 print:hidden">
         <div className="flex items-center gap-6">
           <div className="text-xl font-serif font-bold tracking-wider">KAJRI SAREES</div>
           <div className="text-xs font-medium bg-white/20 px-3 py-1 rounded-full uppercase tracking-widest hidden md:block">
@@ -28,7 +28,7 @@ export default function POSLayout({ children }) {
       </header>
       
       {/* Main POS Workspace */}
-      <main className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex overflow-hidden print:overflow-visible print:block">
         {children}
       </main>
     </div>
