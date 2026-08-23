@@ -4,8 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Lock, User } from 'lucide-react';
 
 export default function LoginPage() {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -19,7 +18,7 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ code })
       });
       const data = await res.json();
 
@@ -27,7 +26,7 @@ export default function LoginPage() {
         router.push('/dashboard');
         router.refresh();
       } else {
-        setError(data.error || 'Invalid credentials');
+        setError(data.error || 'Invalid access code');
       }
     } catch (err) {
       setError('An error occurred during login');
@@ -48,7 +47,7 @@ export default function LoginPage() {
 
         {/* Form */}
         <div className="p-8">
-          <h2 className="text-xl font-bold text-gray-900 mb-6 text-center">Admin Login</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-6 text-center">Admin Access</h2>
           
           {error && (
             <div className="mb-6 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg text-center font-medium">
@@ -56,37 +55,22 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-5">
+          <form onSubmit={handleLogin} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <User className="h-5 w-5 text-gray-400" />
-                </div>
-                <input
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all"
-                  placeholder="admin"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <label className="block text-sm font-medium text-gray-700 mb-2 text-center">Enter Access Code</label>
+              <div className="relative max-w-[240px] mx-auto">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                   <Lock className="h-5 w-5 text-gray-400" />
                 </div>
                 <input
                   type="password"
+                  inputMode="numeric"
                   required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all"
-                  placeholder="••••••••"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  className="w-full pl-12 pr-4 py-4 text-center text-2xl tracking-widest border-2 border-gray-200 rounded-xl focus:ring-4 focus:ring-primary/20 focus:border-primary outline-none transition-all font-mono"
+                  placeholder="•••••"
+                  autoFocus
                 />
               </div>
             </div>

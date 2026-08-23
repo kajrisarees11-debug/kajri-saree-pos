@@ -4,17 +4,16 @@ import { cookies } from 'next/headers';
 
 export async function POST(request) {
   try {
-    const { username, password } = await request.json();
+    const { code } = await request.json();
 
-    // Since it's a Single Admin Login for the POS, we can use simple environment variables
-    const validUsername = process.env.ADMIN_USERNAME || 'admin';
-    const validPassword = process.env.ADMIN_PASSWORD || 'admin123';
+    // Single PIN Login for the POS
+    const validPin = process.env.ADMIN_PIN || '98765';
 
-    if (username === validUsername && password === validPassword) {
+    if (code === validPin) {
       // Create JWT using jose (edge compatible)
       const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'fallback_secret_for_local_dev');
       
-      const token = await new SignJWT({ role: 'admin', username })
+      const token = await new SignJWT({ role: 'admin' })
         .setProtectedHeader({ alg: 'HS256' })
         .setIssuedAt()
         .setExpirationTime('24h')
