@@ -1,5 +1,7 @@
 import { Inter } from "next/font/google";
 import POSLogoutButton from "@/components/POSLogoutButton";
+import { NetworkStatusProvider } from "@/context/NetworkStatusContext";
+import OfflineBanner from "@/components/OfflineBanner";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -9,6 +11,8 @@ export const metadata = {
 
 export default function POSLayout({ children }) {
   return (
+    <NetworkStatusProvider>
+    <OfflineBanner />
     <div className={`min-h-screen print:min-h-0 print:block bg-gray-50 flex flex-col ${inter.className}`}>
       {/* Top Bar for POS */}
       <header className="h-14 bg-primary text-white flex items-center justify-between px-6 shadow-md z-10 shrink-0 print:hidden">
@@ -32,5 +36,6 @@ export default function POSLayout({ children }) {
         {children}
       </main>
     </div>
+    </NetworkStatusProvider>
   );
 }

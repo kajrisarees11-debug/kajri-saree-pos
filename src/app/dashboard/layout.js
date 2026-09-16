@@ -3,7 +3,9 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { DataProvider } from '@/context/DataContext';
-import { 
+import { NetworkStatusProvider } from '@/context/NetworkStatusContext';
+import OfflineBanner from '@/components/OfflineBanner';
+import {
   LayoutDashboard, 
   ShoppingCart, 
   Package, 
@@ -195,7 +197,9 @@ export default function DashboardLayout({ children }) {
   };
 
   return (
-    <DataProvider>
+    <NetworkStatusProvider>
+      <OfflineBanner />
+      <DataProvider>
       <div className="flex h-screen bg-gray-50 overflow-hidden">
 
         {/* Mobile backdrop */}
@@ -286,6 +290,7 @@ export default function DashboardLayout({ children }) {
           </main>
         </div>
       </div>
-    </DataProvider>
+      </DataProvider>
+    </NetworkStatusProvider>
   );
 }

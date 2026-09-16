@@ -37,6 +37,14 @@ export function NetworkStatusProvider({ children }) {
 
   const runSync = useCallback(async () => {
     if (isSyncing) return;
+    // Bail out before flipping isSyncing (and showing the "Syncing..." banner)
+    // when there's nothing queued — otherwise every dashboard load flashes a
+    // sync indicator for a batch of zero invoices.
+    const count = await getPendingInvoiceCount();
+    if (count === 0) {
+      setPendingCount(0);
+      return;
+    }
     setIsSyncing(true);
     try {
       const result = await syncOfflineInvoices();
