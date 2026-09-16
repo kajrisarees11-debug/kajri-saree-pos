@@ -31,6 +31,10 @@ function getDbPath() {
     return path.join(dataDir, 'kajri-pos.db');
   }
 
+  if (process.env.VERCEL) {
+    return '/tmp/kajri-pos.db';
+  }
+
   // Fallback for production if env is somehow missing
   const fallbackDir = path.join(os.homedir(), '.kajri-pos');
   if (!fs.existsSync(fallbackDir)) {
