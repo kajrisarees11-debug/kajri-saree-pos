@@ -21,7 +21,7 @@ export default function Home() {
               Web Login
             </Link>
             <Link 
-              href="https://github.com/kajrisarees11-debug/kajri-saree-pos/releases/latest/download/Kajri%20POS%20Setup%201.0.0.exe"
+              href="https://github.com/kajrisarees11-debug/kajri-saree-pos/releases/latest/download/Kajri.POS.Setup.1.0.0.exe"
               className="text-sm font-medium bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full transition-all flex items-center gap-2"
             >
               <Download size={16} />
