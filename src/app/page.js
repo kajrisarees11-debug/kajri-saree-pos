@@ -21,7 +21,7 @@ export default function Home() {
               Web Login
             </Link>
             <Link 
-              href="/download/Kajri%20POS%20Setup%201.0.0.exe"
+              href="https://github.com/kajrisarees11-debug/kajri-saree-pos/releases/latest/download/Kajri%20POS%20Setup%201.0.0.exe"
               className="text-sm font-medium bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full transition-all flex items-center gap-2"
             >
               <Download size={16} />
@@ -52,7 +52,7 @@ export default function Home() {
 
         <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
           <Link 
-            href="/download/Kajri%20POS%20Setup%201.0.0.exe"
+            href="https://github.com/kajrisarees11-debug/kajri-saree-pos/releases/latest/download/Kajri%20POS%20Setup%201.0.0.exe"
             className="group relative inline-flex items-center justify-center gap-3 px-8 py-4 font-bold text-white transition-all duration-200 bg-[#8B1A4A] rounded-xl hover:bg-[#A32057] hover:shadow-[0_0_40px_rgba(139,26,74,0.4)] hover:-translate-y-1 overflow-hidden"
           >
             <div className="absolute inset-0 w-full h-full -x-100 bg-gradient-to-r from-transparent via-white/20 to-transparent group-hover:animate-shimmer" />
