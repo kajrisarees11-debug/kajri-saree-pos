@@ -5,10 +5,12 @@ import { useSearchParams } from 'next/navigation';
 import { BookOpen, Search, ArrowLeft, Download, ArrowUp, ArrowDown } from 'lucide-react';
 
 function PartyStatementContent() {
-  const { customers, invoices, expenses } = useData();
+  const { customers, invoices } = useData();
   const searchParams = useSearchParams();
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
+  const [customerLedger, setCustomerLedger] = useState([]);
+  const [loadingLedger, setLoadingLedger] = useState(false);
 
   // Auto-select customer if customerId is in URL query
   useEffect(() => {
@@ -19,30 +21,61 @@ function PartyStatementContent() {
     }
   }, [searchParams, customers, selected]);
 
+  // Fetch this customer's ledger — the authoritative record of every event
+  // that has ever moved their balance (credit sales, payments, returns).
+  useEffect(() => {
+    if (!selected) { setCustomerLedger([]); return; }
+    let cancelled = false;
+    setLoadingLedger(true);
+    fetch(`/api/ledgers/${selected._id}`)
+      .then(r => r.json())
+      .then(data => { if (!cancelled && data.success) setCustomerLedger(data.data); })
+      .catch(err => console.error('[Party Statement] Failed to load ledger:', err))
+      .finally(() => { if (!cancelled) setLoadingLedger(false); });
+    return () => { cancelled = true; };
+  }, [selected]);
+
   const filtered = customers.filter(c => c.name?.toLowerCase().includes(search.toLowerCase()) || c.mobileNumber?.includes(search));
 
   const statement = useMemo(() => {
     if (!selected) return [];
     const entries = [];
-    // Invoices for this customer
+
+    // Invoice rows are shown for full purchase-history context (including
+    // sales that were paid in full and never touched the balance at all).
     invoices
-      .filter(inv => {
-        const cid = inv.customerId?._id || inv.customerId;
-        return cid === selected._id;
-      })
+      .filter(inv => (inv.customerId?._id || inv.customerId) === selected._id)
       .forEach(inv => {
         entries.push({
           date: new Date(inv.createdAt || inv.date),
-          type: 'invoice',
           description: `Invoice ${inv.invoiceNumber}`,
           debit: inv.grandTotal || 0,
           credit: inv.amountPaid || 0,
-          ref: inv.invoiceNumber,
         });
       });
-    return entries.sort((a, b) => a.date - b.date);
-  }, [selected, invoices]);
 
+    // Ledger rows cover everything that moved the balance AFTER the sale —
+    // payments received and returns. The initial "Credit sale against
+    // Invoice X" ledger entry is excluded here since the invoice row above
+    // already accounts for that same debit; including both would double-count it.
+    customerLedger
+      .filter(l => !l.description?.startsWith('Credit sale against'))
+      .forEach(l => {
+        entries.push({
+          date: new Date(l.date || l.createdAt),
+          description: l.description || (l.transactionType === 'Credit' ? 'Payment / Credit' : 'Adjustment'),
+          debit: l.transactionType === 'Debit' ? (l.amount || 0) : 0,
+          credit: l.transactionType === 'Credit' ? (l.amount || 0) : 0,
+        });
+      });
+
+    return entries.sort((a, b) => a.date - b.date);
+  }, [selected, invoices, customerLedger]);
+
+  // The running balance below is derived from the same statement rows and
+  // should reconcile with selected.outstandingBalance — if it doesn't,
+  // that's a real sign some balance-affecting event isn't writing a ledger
+  // entry yet, rather than a bug in this page.
   const balance = statement.reduce((s, e) => s + (e.debit || 0) - (e.credit || 0), 0);
 
   if (selected) {
@@ -61,6 +94,12 @@ function PartyStatementContent() {
             <p className={`text-xl font-bold ${balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
               {balance > 0 ? `₹${balance.toLocaleString('en-IN')} Dr` : `₹${Math.abs(balance).toLocaleString('en-IN')} Cr`}
             </p>
+            {loadingLedger && <p className="text-xs text-gray-400 mt-0.5">Loading ledger…</p>}
+            {!loadingLedger && Math.round(balance) !== Math.round(selected.outstandingBalance || 0) && (
+              <p className="text-xs text-orange-600 mt-0.5" title="This statement's computed balance doesn't match the customer's stored balance — some transaction may be missing a ledger entry.">
+                ⚠ Stored balance: ₹{(selected.outstandingBalance || 0).toLocaleString('en-IN')}
+              </p>
+            )}
           </div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">

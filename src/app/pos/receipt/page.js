@@ -13,6 +13,30 @@ function POSReceipt() {
   useEffect(() => {
     const fetchInvoiceAndSettings = async () => {
       const id = searchParams.get('id');
+      const isOffline = searchParams.get('offline') === '1';
+
+      // Bills completed while offline have no server _id yet to fetch by —
+      // the POS page stashes the full invoice (with items already enriched
+      // with product names) in sessionStorage before opening this tab, so a
+      // receipt still gets printed at time of sale instead of never at all.
+      if (isOffline) {
+        try {
+          const raw = sessionStorage.getItem('kajri_offline_receipt');
+          if (raw) setInvoice(JSON.parse(raw));
+        } catch (err) {
+          console.error('[Receipt] Failed to read offline invoice data:', err);
+        }
+        // Settings are a nice-to-have (autoPrint config) — don't block the
+        // receipt on this fetch, which may itself fail while genuinely offline.
+        try {
+          const setRes = await fetch('/api/settings');
+          const setData = await setRes.json();
+          if (setData.success) setSettings(setData.data);
+        } catch { /* render with defaults */ }
+        setLoading(false);
+        return;
+      }
+
       if (!id) {
         setLoading(false);
         return;
@@ -24,7 +48,7 @@ function POSReceipt() {
         ]);
         const invData = await invRes.json();
         const setData = await setRes.json();
-        
+
         if (invData.success) setInvoice(invData.data);
         if (setData.success) setSettings(setData.data);
       } catch (err) {

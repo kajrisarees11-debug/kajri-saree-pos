@@ -11,6 +11,14 @@ const NetworkStatusContext = createContext({
 });
 
 export function NetworkStatusProvider({ children }) {
+  // Must start at `true` here, matching the server-rendered value — this
+  // component is rendered during SSR (where `navigator` doesn't exist), so a
+  // lazy initializer that branches on `typeof navigator` would compute a
+  // DIFFERENT value for the server-rendered HTML vs. the client's first
+  // render whenever the device is actually offline, causing a React
+  // hydration-mismatch error (#418) on every single page. The real value is
+  // applied synchronously in the effect below instead, which only ever runs
+  // client-side post-hydration, so it can safely diverge from `true`.
   const [isOnline, setIsOnline] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -43,11 +51,13 @@ export function NetworkStatusProvider({ children }) {
     // SSR guard
     if (typeof window === 'undefined') return;
 
-    // Defer state updates to avoid synchronous setState warnings
-    setTimeout(() => {
-      setIsOnline(navigator.onLine);
-      refreshPendingCount();
-    }, 0);
+    // Correct the initial (SSR-safe) `true` guess immediately on mount —
+    // synchronously here, not deferred via setTimeout, so the window where a
+    // genuinely-offline device briefly shows as online is as short as
+    // React's own commit timing allows.
+    setIsOnline(navigator.onLine);
+    refreshPendingCount();
+    if (navigator.onLine) runSync();
 
     const handleOnline = () => {
       setIsOnline(true);
@@ -65,9 +75,17 @@ export function NetworkStatusProvider({ children }) {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
+    // Chromium's 'online'/'offline' events don't always fire reliably inside
+    // an Electron BrowserWindow. Poll navigator.onLine as a fallback so a
+    // missed event doesn't leave the banner permanently wrong.
+    const pollId = setInterval(() => {
+      setIsOnline((prev) => (prev !== navigator.onLine ? navigator.onLine : prev));
+    }, 10000);
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      clearInterval(pollId);
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     };
   }, [runSync, refreshPendingCount]);

@@ -3,19 +3,38 @@ import { useState } from 'react';
 import { Search, Plus, Edit, PackageOpen, Tag, WifiOff } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 
+const BLANK_PRODUCT = { name: '', sku: '', barcode: '', category: 'Saree', price: '', purchasePrice: '', stock: '', taxRate: '5' };
+
 export default function ProductsPage() {
   const { products, loading, isOnline, refresh } = useData();
   const [search, setSearch] = useState('');
-  
+
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newProduct, setNewProduct] = useState({
-    name: '', sku: '', barcode: '', category: 'Saree', price: '', purchasePrice: '', stock: '', taxRate: '5'
-  });
+  const [editingId, setEditingId] = useState(null);
+  const [newProduct, setNewProduct] = useState(BLANK_PRODUCT);
+  const [saving, setSaving] = useState(false);
 
+  const openAddModal = () => {
+    setEditingId(null);
+    setNewProduct(BLANK_PRODUCT);
+    setIsModalOpen(true);
+  };
 
-  const handleAddProduct = async (e) => {
+  const openEditModal = (product) => {
+    setEditingId(product._id);
+    setNewProduct({
+      name: product.name || '', sku: product.sku || '', barcode: product.barcode || '',
+      category: product.categoryId || product.category || 'Saree',
+      price: product.price ?? '', purchasePrice: product.purchasePrice ?? '',
+      stock: product.stock ?? '', taxRate: product.taxRate ?? '5',
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleSaveProduct = async (e) => {
     e.preventDefault();
+    setSaving(true);
     try {
       const payload = {
         ...newProduct,
@@ -24,22 +43,25 @@ export default function ProductsPage() {
         stock: Number(newProduct.stock),
         taxRate: Number(newProduct.taxRate)
       };
-      const res = await fetch('/api/products', {
-        method: 'POST',
+      const res = await fetch(editingId ? `/api/products/${editingId}` : '/api/products', {
+        method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.success) {
         setIsModalOpen(false);
-        setNewProduct({ name: '', sku: '', barcode: '', category: 'Saree', price: '', purchasePrice: '', stock: '', taxRate: '5' });
+        setEditingId(null);
+        setNewProduct(BLANK_PRODUCT);
         refresh('products');
       } else {
         alert('Failed: ' + data.error);
       }
     } catch (err) {
       console.error(err);
-      alert('Error creating product');
+      alert(`Error ${editingId ? 'updating' : 'creating'} product`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -53,7 +75,7 @@ export default function ProductsPage() {
     <div className="max-w-6xl mx-auto">
       {!isOnline && (
         <div className="mb-4 flex items-center gap-2 bg-orange-50 border border-orange-200 text-orange-700 px-4 py-2.5 rounded-lg text-sm font-medium">
-          <WifiOff className="w-4 h-4" /> Offline mode — showing cached products. Add/Edit requires internet.
+          <WifiOff className="w-4 h-4" /> Offline mode — changes are saved locally and sync to the cloud once back online.
         </div>
       )}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -72,7 +94,7 @@ export default function ProductsPage() {
               className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary text-sm"
             />
           </div>
-          <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary-light transition-colors text-sm font-medium whitespace-nowrap">
+          <button onClick={openAddModal} className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary-light transition-colors text-sm font-medium whitespace-nowrap">
             <Plus className="w-4 h-4" /> Add Product
           </button>
         </div>
@@ -136,7 +158,7 @@ export default function ProductsPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <button className="text-gray-400 hover:text-primary transition-colors p-1">
+                      <button onClick={() => openEditModal(product)} className="text-gray-400 hover:text-primary transition-colors p-1">
                         <Edit className="w-4 h-4" />
                       </button>
                     </td>
@@ -152,8 +174,8 @@ export default function ProductsPage() {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">Add New Product</h3>
-            <form onSubmit={handleAddProduct} className="space-y-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">{editingId ? 'Edit Product' : 'Add New Product'}</h3>
+            <form onSubmit={handleSaveProduct} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Product Name *</label>
@@ -189,8 +211,8 @@ export default function ProductsPage() {
                 </div>
               </div>
               <div className="flex gap-3 justify-end mt-6">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm">Cancel</button>
-                <button type="submit" className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-light transition-colors font-medium text-sm">Save Product</button>
+                <button type="button" onClick={() => { setIsModalOpen(false); setEditingId(null); }} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium text-sm">Cancel</button>
+                <button type="submit" disabled={saving} className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-light transition-colors font-medium text-sm disabled:opacity-50">{saving ? 'Saving…' : (editingId ? 'Update Product' : 'Save Product')}</button>
               </div>
             </form>
           </div>

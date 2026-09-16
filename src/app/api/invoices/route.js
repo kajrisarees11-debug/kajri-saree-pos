@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { invoices, customers, products, ledgers, generateObjectId, IS_CLOUD } from '@/lib/dataAdapter';
+import { invoices, IS_CLOUD } from '@/lib/dataAdapter';
 import dbConnect from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -20,105 +20,73 @@ export async function GET(request) {
   }
 }
 
+async function generateInvoiceNumber() {
+  if (IS_CLOUD) {
+    await dbConnect();
+    const POSInvoice = (await import('@/lib/models/POSInvoice')).default;
+    const count = await POSInvoice.countDocuments();
+    return `INV-${new Date().getFullYear()}-${(count + 1).toString().padStart(4, '0')}`;
+  }
+  const db = require('@/lib/sqlite').default;
+  const count = db.prepare('SELECT COUNT(*) as c FROM invoices').get().c;
+  return `INV-${new Date().getFullYear()}-${(count + 1).toString().padStart(4, '0')}`;
+}
+
+function isUniqueConstraintError(err) {
+  return err.code === 11000 || err.code === 'SQLITE_CONSTRAINT_UNIQUE';
+}
+
 export async function POST(request) {
   try {
     const body = await request.json();
-    const now = new Date().toISOString();
 
-    // Auto-generate invoice number if not provided
-    if (!body.invoiceNumber) {
-      if (IS_CLOUD) {
-        await dbConnect();
-        const POSInvoice = (await import('@/lib/models/POSInvoice')).default;
-        const count = await POSInvoice.countDocuments();
-        body.invoiceNumber = `INV-${new Date().getFullYear()}-${(count + 1).toString().padStart(4, '0')}`;
-      } else {
-        const db = require('@/lib/sqlite').default;
-        const count = db.prepare('SELECT COUNT(*) as c FROM invoices').get().c;
-        body.invoiceNumber = `INV-${new Date().getFullYear()}-${(count + 1).toString().padStart(4, '0')}`;
-      }
-    }
-
-    // 1. Create invoice
-    const invoiceData = await invoices.create(body);
-
-    // 2. Deduct product stock
+    // Stock floor check up front — before writing anything — so an
+    // over-sell attempt fails cleanly instead of driving stock negative.
     if (body.items?.length) {
-      if (IS_CLOUD) {
-        await dbConnect();
-        const Product = (await import('@/lib/models/Product')).default;
-        await Promise.all(body.items.map(item =>
-          Product.findByIdAndUpdate(item.productId, {
-            $inc: { stock: -item.quantity },
-            updatedAt: now,
-          })
-        ));
-      } else {
-        const db = require('@/lib/sqlite').default;
-        const { queueSync } = require('@/lib/sqlite');
-        const updateStmt = db.prepare('UPDATE products SET stock = stock - ?, updatedAt = ? WHERE _id = ?');
-        db.transaction(() => {
-          for (const item of body.items) {
-            updateStmt.run(item.quantity, now, item.productId);
-            queueSync('UPDATE', 'products', item.productId, { $inc: { stock: -item.quantity }, updatedAt: now });
-          }
-        })();
-      }
-    }
-
-    // 3. Update customer balance & ledger if credit sale
-    if (body.customerId) {
-      let balanceAdded = 0;
-      if (body.paymentMethod === 'Udhaar') balanceAdded = body.grandTotal;
-      else if (body.amountPaid < body.grandTotal) balanceAdded = body.grandTotal - body.amountPaid;
-
-      if (IS_CLOUD) {
-        await dbConnect();
-        const POSCustomer = (await import('@/lib/models/POSCustomer')).default;
-        await POSCustomer.findByIdAndUpdate(body.customerId, {
-          $inc: { totalPurchases: body.grandTotal, outstandingBalance: balanceAdded },
-          updatedAt: now,
-        });
-        if (balanceAdded > 0) {
-          await ledgers.create({
-            entityType: 'POSCustomer',
-            entityId: body.customerId,
-            transactionType: 'Debit',
-            amount: balanceAdded,
-            description: `Credit sale against Invoice ${body.invoiceNumber}`,
-            date: now,
-          });
+      const { products } = await import('@/lib/dataAdapter');
+      for (const item of body.items) {
+        if (!item.productId) continue;
+        const product = await products.getById(item.productId);
+        if (product && (product.stock ?? 0) < item.quantity) {
+          return NextResponse.json({
+            success: false,
+            error: `Insufficient stock for "${product.name}" — only ${product.stock} available, ${item.quantity} requested.`,
+          }, { status: 400 });
         }
-      } else {
-        const db = require('@/lib/sqlite').default;
-        const { queueSync } = require('@/lib/sqlite');
-        db.transaction(() => {
-          db.prepare(`
-            UPDATE customers SET totalPurchases = totalPurchases + ?, 
-            outstandingBalance = outstandingBalance + ?, updatedAt = ? WHERE _id = ?
-          `).run(body.grandTotal, balanceAdded, now, body.customerId);
-          queueSync('UPDATE', 'customers', body.customerId, {
-            $inc: { totalPurchases: body.grandTotal, outstandingBalance: balanceAdded }, updatedAt: now
-          });
-          if (balanceAdded > 0) {
-            const ledgerId = generateObjectId();
-            const ledgerData = {
-              _id: ledgerId, entityType: 'POSCustomer', entityId: body.customerId,
-              transactionType: 'Debit', amount: balanceAdded,
-              description: `Credit sale against Invoice ${body.invoiceNumber}`,
-              date: now, createdAt: now, updatedAt: now,
-            };
-            const cols = Object.keys(ledgerData);
-            db.prepare(`INSERT INTO ledgers (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...Object.values(ledgerData));
-            queueSync('INSERT', 'ledgers', ledgerId, ledgerData);
-          }
-        })();
       }
     }
 
-    return NextResponse.json({ success: true, data: invoiceData }, { status: 201 });
+    // Invoice creation, stock deduction, and customer balance/ledger update
+    // all happen atomically together (per-backend transaction) — see
+    // invoices.createWithEffects(). Idempotent on body.idempotencyKey.
+    //
+    // Invoice-number generation (COUNT then +1) isn't itself locked against
+    // a concurrent request doing the same read, so two simultaneous
+    // checkouts can compute the same number — the actual INSERT's unique
+    // constraint is what catches that, at which point we just regenerate a
+    // fresh number and retry, rather than failing a legitimate concurrent sale.
+    const explicitInvoiceNumber = body.invoiceNumber;
+    let lastError;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (!explicitInvoiceNumber) {
+        body.invoiceNumber = await generateInvoiceNumber();
+      }
+      try {
+        const { data: invoiceData, isNew } = await invoices.createWithEffects(body);
+        return NextResponse.json({ success: true, data: invoiceData, replay: !isNew }, { status: isNew ? 201 : 200 });
+      } catch (err) {
+        lastError = err;
+        // Only worth retrying if it was our own generated number that
+        // collided — a caller-supplied invoiceNumber colliding is a real
+        // conflict, not a race to paper over.
+        if (!explicitInvoiceNumber && isUniqueConstraintError(err)) continue;
+        throw err;
+      }
+    }
+    throw lastError;
   } catch (error) {
     console.error('API Error [invoices POST]:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    const status = error.code === 'INSUFFICIENT_STOCK' ? 409 : 400;
+    return NextResponse.json({ success: false, error: error.message }, { status });
   }
 }

@@ -9,19 +9,36 @@ export default function ItemWiseSalesPage() {
 
   const itemSales = useMemo(() => {
     const map = {};
-    invoices.filter(inv => inv.status === 'Completed').forEach(inv => {
+    // Include 'Returned' invoices too — the return flow flips an invoice's
+    // status to 'Returned' even for a single-item partial return, so
+    // excluding the whole invoice (as this used to) dropped every OTHER
+    // item on it as well, undercounting products that were never returned.
+    //
+    // The return record only stores an aggregate refundTotal, not which
+    // specific items/quantities were returned, so there's no exact way to
+    // attribute the refund to individual line items here. As an
+    // approximation, a Returned invoice's items are scaled down by the
+    // fraction of the sale that was refunded (refundTotal / grandTotal)
+    // rather than either counting them at full value or dropping them
+    // entirely — both of which are worse than this pro-rata estimate.
+    invoices.filter(inv => inv.status === 'Completed' || inv.status === 'Returned').forEach(inv => {
+      const keepRatio = inv.status === 'Returned'
+        ? Math.max(0, 1 - ((inv.refundTotal || 0) / (inv.grandTotal || 1)))
+        : 1;
+      if (keepRatio === 0) return;
+
       (inv.items || []).forEach(item => {
         const pid = item.productId?._id || item.productId;
         const name = item.productId?.name || pid || 'Unknown';
         if (!map[pid]) {
           map[pid] = { name, qty: 0, revenue: 0, profit: 0 };
         }
-        map[pid].qty     += item.quantity || 0;
-        map[pid].revenue += item.total    || 0;
+        map[pid].qty     += (item.quantity || 0) * keepRatio;
+        map[pid].revenue += (item.total    || 0) * keepRatio;
         // Rough profit estimate if we have purchase price
         const prod = products.find(p => p._id === pid);
         if (prod?.purchasePrice) {
-          map[pid].profit += (item.total || 0) - (prod.purchasePrice * (item.quantity || 0));
+          map[pid].profit += ((item.total || 0) - (prod.purchasePrice * (item.quantity || 0))) * keepRatio;
         }
       });
     });
@@ -77,7 +94,7 @@ export default function ItemWiseSalesPage() {
                 <tr key={idx} className="hover:bg-gray-50">
                   <td className="px-5 py-3 text-gray-400 text-xs font-medium">{idx + 1}</td>
                   <td className="px-5 py-3 font-medium text-gray-900 max-w-[200px] truncate">{item.name}</td>
-                  <td className="px-5 py-3 text-center font-semibold text-gray-900">{item.qty}</td>
+                  <td className="px-5 py-3 text-center font-semibold text-gray-900">{Math.round(item.qty * 10) / 10}</td>
                   <td className="px-5 py-3 text-right font-bold text-gray-900">₹{item.revenue.toLocaleString('en-IN')}</td>
                   <td className={`px-5 py-3 text-right font-semibold text-sm ${item.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {item.profit !== 0 ? `₹${item.profit.toLocaleString('en-IN')}` : '—'}

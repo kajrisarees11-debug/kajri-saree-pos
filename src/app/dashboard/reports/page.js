@@ -1,13 +1,14 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Download, FileText, Calendar, Filter, PieChart, IndianRupee, TrendingUp } from 'lucide-react';
+import { Download, FileText, Calendar, Filter, PieChart, IndianRupee, TrendingUp, AlertTriangle, RefreshCw } from 'lucide-react';
 
 export default function ReportsPage() {
   const [dateRange, setDateRange] = useState('this_month');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  
+
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [stats, setStats] = useState({
     sales: 0,
     purchases: 0,
@@ -16,21 +17,27 @@ export default function ReportsPage() {
   });
   const [breakdown, setBreakdown] = useState([]);
 
-  useEffect(() => {
-    const fetchReports = async () => {
-      try {
-        const res = await fetch('/api/reports');
-        const data = await res.json();
-        if (data.success) {
-          setStats(data.data.stats);
-          setBreakdown(data.data.breakdown);
-        }
-      } catch (err) {
-        console.error("Error fetching reports", err);
-      } finally {
-        setLoading(false);
+  const fetchReports = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/reports');
+      const data = await res.json();
+      if (data.success) {
+        setStats(data.data.stats);
+        setBreakdown(data.data.breakdown);
+      } else {
+        setError(data.error || 'Failed to load reports.');
       }
-    };
+    } catch (err) {
+      console.error("Error fetching reports", err);
+      setError(err.message || 'Network error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchReports();
   }, []);
 
@@ -111,6 +118,13 @@ export default function ReportsPage() {
           <Filter className="w-4 h-4" /> Apply Filters
         </button>
       </div>
+
+      {error && (
+        <div className="mb-8 flex items-center justify-between gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+          <span className="flex items-center gap-2"><AlertTriangle className="w-4 h-4 shrink-0" /> Couldn&apos;t load reports ({error}) — the ₹0 figures below are NOT real data, the fetch failed.</span>
+          <button onClick={fetchReports} className="shrink-0 flex items-center gap-1.5 font-semibold underline hover:no-underline"><RefreshCw className="w-3.5 h-3.5" /> Retry</button>
+        </div>
+      )}
 
       {/* Stats Summary */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">

@@ -1,42 +1,43 @@
 import { NextResponse } from 'next/server';
-import db from '@/lib/sqlite';
+import { invoices, customers, products } from '@/lib/dataAdapter';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/invoices/[id]
  * Fetch a single invoice by ID with customer and items populated.
- * Uses local SQLite — 100% offline capable.
+ * Goes through the universal adapter, so it works against whichever
+ * backend (MongoDB on Vercel, SQLite on desktop) is actually active.
  */
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
 
-    const invoice = db.prepare('SELECT * FROM invoices WHERE _id = ?').get(id);
+    const invoice = await invoices.getById(id);
 
     if (!invoice) {
       return NextResponse.json({ success: false, error: 'Invoice not found' }, { status: 404 });
     }
 
-    // Parse items JSON
-    invoice.items = invoice.items ? JSON.parse(invoice.items) : [];
-
     // Join customer info
     if (invoice.customerId) {
-      const customer = db.prepare('SELECT * FROM customers WHERE _id = ?').get(invoice.customerId);
+      const customer = await customers.getById(invoice.customerId);
       invoice.customerId = customer || { _id: invoice.customerId, name: 'Unknown' };
     }
 
     // Enrich items with product details
-    invoice.items = invoice.items.map(item => {
-      if (item.productId) {
-        const product = db.prepare('SELECT _id, name, sku, barcode, price FROM products WHERE _id = ?').get(item.productId);
-        if (product) {
-          return { ...item, productId: product };
+    invoice.items = await Promise.all(
+      (invoice.items || []).map(async (item) => {
+        if (item.productId) {
+          const product = await products.getById(item.productId);
+          if (product) {
+            const { _id, name, sku, barcode, price } = product;
+            return { ...item, productId: { _id, name, sku, barcode, price } };
+          }
         }
-      }
-      return item;
-    });
+        return item;
+      })
+    );
 
     return NextResponse.json({ success: true, data: invoice });
   } catch (error) {

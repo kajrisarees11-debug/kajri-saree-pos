@@ -110,7 +110,13 @@ export default function CustomersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {filteredCustomers.map((customer) => (
+              {loading && (
+                <tr><td colSpan="6" className="px-6 py-8 text-center text-gray-500">Loading customers...</td></tr>
+              )}
+              {!loading && filteredCustomers.length === 0 && (
+                <tr><td colSpan="6" className="px-6 py-8 text-center text-gray-500">{search ? 'No customers match your search.' : 'No customers added yet.'}</td></tr>
+              )}
+              {!loading && filteredCustomers.map((customer) => (
                 <tr key={customer._id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4 font-medium text-gray-900">{customer.name}</td>
                   <td className="px-6 py-4 text-sm text-gray-600">{customer.mobileNumber}</td>

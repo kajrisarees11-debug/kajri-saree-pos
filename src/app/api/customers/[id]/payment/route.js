@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
-import db, { generateObjectId, queueSync } from '@/lib/sqlite';
+import { IS_CLOUD, generateObjectId } from '@/lib/dataAdapter';
+import dbConnect from '@/lib/db';
 
 /**
  * POST /api/customers/[id]/payment
  * Record a payment received from a customer (reduces outstanding balance).
+ * Works against whichever backend (MongoDB on Vercel, SQLite on desktop) is active.
  */
 export async function POST(request, { params }) {
   try {
@@ -14,6 +16,60 @@ export async function POST(request, { params }) {
       return NextResponse.json({ success: false, error: 'Invalid amount' }, { status: 400 });
     }
 
+    const timestamp = new Date().toISOString();
+
+    if (IS_CLOUD) {
+      await dbConnect();
+      const mongoose = (await import('mongoose')).default;
+      const { default: POSCustomer } = await import('@/lib/models/POSCustomer');
+      const { default: Ledger } = await import('@/lib/models/Ledger');
+
+      const session = await mongoose.startSession();
+      let prevBalance = 0;
+      let newBalance = 0;
+      try {
+        const customer = await POSCustomer.findById(id);
+        if (!customer) {
+          return NextResponse.json({ success: false, error: 'Customer not found' }, { status: 404 });
+        }
+        prevBalance = customer.outstandingBalance || 0;
+        newBalance = Math.max(0, prevBalance - amount);
+        // Record what was actually applied to the balance, not the raw input
+        // — otherwise an overpayment (e.g. an extra zero typed in) leaves the
+        // ledger permanently overstating total payments versus the floored balance.
+        const amountApplied = prevBalance - newBalance;
+        const overpaid = amount - amountApplied;
+
+        await session.withTransaction(async () => {
+          customer.outstandingBalance = newBalance;
+          customer.updatedAt = timestamp;
+          await customer.save({ session });
+
+          await Ledger.create([{
+            _id: generateObjectId(),
+            entityType: 'POSCustomer',
+            entityId: id,
+            transactionType: 'Credit',
+            amount: amountApplied,
+            description: `Payment received (${mode || 'Cash'})${note ? ` — ${note}` : ''}${overpaid > 0 ? ` [overpaid by ${overpaid}, balance was already ${prevBalance}]` : ''}`,
+            date: timestamp,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          }], { session });
+        });
+      } finally {
+        await session.endSession();
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: { customer: id, amountReceived: amount, appliedToBalance: prevBalance - newBalance, previousBalance: prevBalance, newBalance },
+      });
+    }
+
+    const db = require('@/lib/sqlite').default;
+    const { queueSync } = require('@/lib/sqlite');
+
     const customer = db.prepare('SELECT * FROM customers WHERE _id = ?').get(id);
     if (!customer) {
       return NextResponse.json({ success: false, error: 'Customer not found' }, { status: 404 });
@@ -21,7 +77,8 @@ export async function POST(request, { params }) {
 
     const prevBalance = customer.outstandingBalance || 0;
     const newBalance = Math.max(0, prevBalance - amount);
-    const timestamp = new Date().toISOString();
+    const amountApplied = prevBalance - newBalance;
+    const overpaid = amount - amountApplied;
 
     const ledgerId = generateObjectId();
     const ledgerEntry = {
@@ -29,19 +86,17 @@ export async function POST(request, { params }) {
       entityType: 'POSCustomer',
       entityId: id,
       transactionType: 'Credit',
-      amount,
-      description: `Payment received (${mode || 'Cash'})${note ? ` — ${note}` : ''}`,
+      amount: amountApplied,
+      description: `Payment received (${mode || 'Cash'})${note ? ` — ${note}` : ''}${overpaid > 0 ? ` [overpaid by ${overpaid}, balance was already ${prevBalance}]` : ''}`,
       date: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp
     };
 
     db.transaction(() => {
-      // 1. Update customer balance
       db.prepare('UPDATE customers SET outstandingBalance = ?, updatedAt = ? WHERE _id = ?').run(newBalance, timestamp, id);
       queueSync('UPDATE', 'customers', id, { outstandingBalance: newBalance, updatedAt: timestamp });
 
-      // 2. Insert ledger entry
       const ledgerCols = Object.keys(ledgerEntry);
       const ledgerVals = Object.values(ledgerEntry);
       const ledgerPlaceholders = ledgerCols.map(() => '?').join(', ');
@@ -54,6 +109,7 @@ export async function POST(request, { params }) {
       data: {
         customer: id,
         amountReceived: amount,
+        appliedToBalance: amountApplied,
         previousBalance: prevBalance,
         newBalance: newBalance,
       },

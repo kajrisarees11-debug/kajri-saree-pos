@@ -9,8 +9,32 @@
 
 const { app, BrowserWindow, ipcMain, Menu, shell, dialog, nativeTheme } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const http = require('http');
+
+// ──────────────────────────────────────────────
+// Single instance lock
+//
+// Without this, double-clicking the desktop icon twice (or launching again
+// after forgetting a window is already open) starts a second process that
+// tries to spawn its own Next.js server on the same port and open a second
+// better-sqlite3 handle on the same database file, which can produce
+// SQLITE_BUSY errors or a confusing "failed to start" dialog on the second
+// launch while the first instance keeps running fine.
+// ──────────────────────────────────────────────
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 // ──────────────────────────────────────────────
 // Configuration
@@ -22,6 +46,49 @@ const IS_PROD   = !IS_DEV;
 
 let mainWindow = null;
 let nextProcess = null;
+let isShuttingDown = false; // distinguishes an intentional kill from a real crash
+
+// ──────────────────────────────────────────────
+// Persistent file logging
+//
+// In production the app is launched by double-clicking a desktop shortcut —
+// there is no attached console, so console.log/console.error previously
+// went nowhere a user or support could ever see. This mirrors them to a
+// log file in the per-user app-data folder.
+// ──────────────────────────────────────────────
+function setupFileLogging() {
+  try {
+    const logDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    const logPath = path.join(logDir, 'main.log');
+
+    try {
+      const stat = fs.statSync(logPath);
+      if (stat.size > 5 * 1024 * 1024) {
+        fs.renameSync(logPath, path.join(logDir, 'main.log.old'));
+      }
+    } catch {
+      // no existing log file yet — fine
+    }
+
+    const stream = fs.createWriteStream(logPath, { flags: 'a' });
+    const origLog = console.log.bind(console);
+    const origError = console.error.bind(console);
+    const writeLine = (level, args) => {
+      try {
+        const line = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+        stream.write(`[${new Date().toISOString()}] [${level}] ${line}\n`);
+      } catch {
+        // best effort — never let logging itself crash the app
+      }
+    };
+    console.log = (...args) => { origLog(...args); writeLine('INFO', args); };
+    console.error = (...args) => { origError(...args); writeLine('ERROR', args); };
+    console.log(`[Kajri POS] Logging to ${logPath}`);
+  } catch (err) {
+    console.error('[Kajri POS] Failed to set up file logging:', err);
+  }
+}
 
 // ──────────────────────────────────────────────
 // Poll until Next.js is ready
@@ -51,6 +118,50 @@ function waitForNextServer(url, retries = 60, interval = 1000) {
 }
 
 // ──────────────────────────────────────────────
+// Local auth credentials
+//
+// The desktop build has no way for a shop owner to set environment
+// variables, so a JWT signing secret and a login PIN are generated once
+// on first launch and persisted in the per-user app-data folder. The PIN
+// is shown to the owner a single time (on generation) via a dialog.
+// ──────────────────────────────────────────────
+function ensureLocalCredentials() {
+  const credsPath = path.join(app.getPath('userData'), 'auth-credentials.json');
+
+  let creds = null;
+  try {
+    creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+  } catch {
+    creds = null;
+  }
+
+  if (creds && creds.jwtSecret && creds.adminPin) {
+    return creds;
+  }
+
+  creds = {
+    jwtSecret: crypto.randomBytes(32).toString('hex'),
+    adminPin: String(crypto.randomInt(10000, 100000)),
+  };
+
+  try {
+    fs.mkdirSync(path.dirname(credsPath), { recursive: true });
+    fs.writeFileSync(credsPath, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  } catch (err) {
+    console.error('[Kajri POS] Failed to persist auth credentials:', err);
+  }
+
+  dialog.showMessageBoxSync({
+    type: 'info',
+    title: 'Kajri POS — Login PIN Created',
+    message: `A login PIN has been generated for this installation:\n\n${creds.adminPin}\n\nWrite this down — you'll need it every time you open Kajri POS. It is stored only on this computer, in ${credsPath}.`,
+    buttons: ['OK'],
+  });
+
+  return creds;
+}
+
+// ──────────────────────────────────────────────
 // Start Next.js server (production only)
 // ──────────────────────────────────────────────
 function startNextServer() {
@@ -64,6 +175,8 @@ function startNextServer() {
       ? path.join(process.resourcesPath, 'app')
       : path.join(__dirname, '..');
 
+    const { jwtSecret, adminPin } = ensureLocalCredentials();
+
     // Start `node server.js` (Next.js built server)
     nextProcess = spawn('node', ['node_modules/.bin/next', 'start', '--port', NEXT_PORT], {
       cwd: appDir,
@@ -72,6 +185,8 @@ function startNextServer() {
         NODE_ENV: 'production',
         ELECTRON: 'true',
         PORT: String(NEXT_PORT),
+        JWT_SECRET: jwtSecret,
+        ADMIN_PIN: adminPin,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: true,
@@ -92,6 +207,25 @@ function startNextServer() {
     });
 
     nextProcess.on('error', reject);
+
+    // Previously there was no handler at all for the server dying AFTER
+    // startup succeeded — the window just kept showing its last-rendered
+    // page while every subsequent request silently failed, with nothing
+    // telling the cashier the backend was gone.
+    nextProcess.on('exit', (code, signal) => {
+      const wasIntentional = isShuttingDown;
+      nextProcess = null;
+      if (wasIntentional) return;
+
+      console.error(`[Kajri POS] Next.js server exited unexpectedly (code=${code}, signal=${signal}).`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        dialog.showErrorBox(
+          'Kajri POS — Server Stopped',
+          `The application server stopped unexpectedly and Kajri POS can no longer function.\n\nPlease close and reopen the app. If this keeps happening, contact support with the log file:\n${path.join(app.getPath('userData'), 'logs', 'main.log')}`
+        );
+      }
+      app.quit();
+    });
 
     // Fallback: poll HTTP
     waitForNextServer(NEXT_URL).then(resolve).catch(reject);
@@ -154,6 +288,8 @@ function createWindow() {
 // Application lifecycle
 // ──────────────────────────────────────────────
 app.whenReady().then(async () => {
+  setupFileLogging();
+
   // Show a simple splash while Next.js boots (production only)
   if (IS_PROD) {
     await showSplash();
@@ -187,10 +323,25 @@ app.on('window-all-closed', () => {
 });
 
 function cleanup() {
-  if (nextProcess) {
+  isShuttingDown = true;
+  if (!nextProcess || !nextProcess.pid) return;
+
+  if (process.platform === 'win32') {
+    // `shell: true` spawns node.exe as a grandchild of a cmd.exe wrapper.
+    // A plain SIGTERM only reaches cmd.exe — it does not reliably kill the
+    // grandchild node.exe (and its open better-sqlite3 / port 3000 handle),
+    // which can leave an orphaned process blocking the next launch.
+    // `/T` kills the whole process tree.
+    try {
+      spawn('taskkill', ['/pid', String(nextProcess.pid), '/T', '/F']);
+    } catch (err) {
+      console.error('[Kajri POS] taskkill failed, falling back to SIGKILL:', err);
+      try { nextProcess.kill('SIGKILL'); } catch { /* already gone */ }
+    }
+  } else {
     nextProcess.kill('SIGTERM');
-    nextProcess = null;
   }
+  nextProcess = null;
 }
 
 process.on('exit', cleanup);
@@ -287,43 +438,82 @@ ipcMain.handle('get-printers', async () => {
 // Print the current page
 ipcMain.handle('print-page', async (_, options = {}) => {
   if (!mainWindow) return { success: false, error: 'No window' };
-  return new Promise((resolve) => {
-    mainWindow.webContents.print(
-      {
-        silent: options.silent ?? false,
-        printBackground: true,
-        margins: { marginType: 'custom', top: 0, bottom: 0, left: 0, right: 0 },
-        ...options,
-      },
-      (success, reason) => resolve({ success, reason })
-    );
-  });
+  try {
+    return await new Promise((resolve) => {
+      mainWindow.webContents.print(
+        {
+          silent: options.silent ?? false,
+          printBackground: true,
+          margins: { marginType: 'custom', top: 0, bottom: 0, left: 0, right: 0 },
+          ...options,
+        },
+        (success, reason) => resolve({ success, reason })
+      );
+    });
+  } catch (err) {
+    console.error('[Kajri POS] print-page failed:', err);
+    return { success: false, error: err.message };
+  }
 });
 
 // Export / save PDF
-ipcMain.handle('save-pdf', async (_, { defaultName }) => {
-  if (!mainWindow) return { success: false };
-  const { filePath } = await dialog.showSaveDialog(mainWindow, {
-    title: 'Save Invoice as PDF',
-    defaultPath: defaultName || 'invoice.pdf',
-    filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
-  });
+ipcMain.handle('save-pdf', async (_, { defaultName } = {}) => {
+  if (!mainWindow) return { success: false, error: 'No window' };
+  try {
+    const { filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Invoice as PDF',
+      defaultPath: defaultName || 'invoice.pdf',
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+    });
 
-  if (!filePath) return { success: false, cancelled: true };
+    if (!filePath) return { success: false, cancelled: true };
 
-  const data = await mainWindow.webContents.printToPDF({
-    printBackground: true,
-    pageSize: 'A4',
-    margins: { marginType: 'custom', top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 },
-  });
+    const data = await mainWindow.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { marginType: 'custom', top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 },
+    });
 
-  require('fs').writeFileSync(filePath, data);
-  shell.openPath(filePath); // Open PDF after saving
-  return { success: true, filePath };
+    fs.writeFileSync(filePath, data);
+    const openError = await shell.openPath(filePath); // resolves with '' on success, an error string on failure
+    if (openError) console.error('[Kajri POS] Saved PDF but failed to open it:', openError);
+    return { success: true, filePath };
+  } catch (err) {
+    console.error('[Kajri POS] save-pdf failed:', err);
+    return { success: false, error: err.message };
+  }
 });
 
-// Open file/folder in OS explorer
+// Open a file/folder in the OS file explorer. Restricted to locations this
+// app itself could plausibly have written to — the renderer is sandboxed
+// and has no other route to the filesystem, but this bridge would
+// otherwise happily open (and for executables, effectively run) any path
+// it's handed.
 ipcMain.handle('open-path', async (_, filePath) => {
-  await shell.openPath(filePath);
-  return { success: true };
+  if (typeof filePath !== 'string' || !filePath) {
+    return { success: false, error: 'Invalid path' };
+  }
+
+  const allowedRoots = [
+    app.getPath('userData'),
+    app.getPath('temp'),
+    app.getPath('downloads'),
+    app.getPath('documents'),
+  ].map((p) => path.resolve(p) + path.sep);
+
+  const resolved = path.resolve(filePath) + (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory() ? path.sep : '');
+  const isAllowed = allowedRoots.some((root) => resolved.startsWith(root));
+  if (!isAllowed) {
+    console.error('[Kajri POS] Refused to open-path outside allowed directories:', filePath);
+    return { success: false, error: 'Path not allowed' };
+  }
+
+  try {
+    const openError = await shell.openPath(filePath);
+    if (openError) return { success: false, error: openError };
+    return { success: true };
+  } catch (err) {
+    console.error('[Kajri POS] open-path failed:', err);
+    return { success: false, error: err.message };
+  }
 });

@@ -287,7 +287,13 @@ export async function getPendingInvoiceCount() {
 /**
  * Push all pending offline invoices to the server.
  * Called automatically when the device reconnects to the internet.
- * @returns {{ synced: number, failed: number }}
+ *
+ * Only marks an invoice as synced once the server has confirmed THAT SPECIFIC
+ * invoice succeeded — a batch can partially fail (e.g. one malformed item),
+ * and previously the whole batch was marked synced off the coarse top-level
+ * `success` flag, silently discarding any invoice that failed alongside
+ * successful ones in the same batch.
+ * @returns {{ synced: number, failed: number, errors?: Array }}
  */
 export async function syncOfflineInvoices() {
   const pending = await getPendingOfflineInvoices();
@@ -306,15 +312,25 @@ export async function syncOfflineInvoices() {
     }
 
     const data = await res.json();
-    
-    if (data.success) {
-      // Mark all as synced in local DB
-      await markInvoicesSynced(pending.map((i) => i.localId));
-      console.log(`[OfflineSync] ✅ Synced ${data.synced} invoices to the cloud.`);
-      return { synced: data.synced, failed: 0 };
+
+    if (!data.success) {
+      console.error('[OfflineSync] Server reported failure for the whole batch:', data.error);
+      return { synced: 0, failed: pending.length };
     }
 
-    return { synced: 0, failed: pending.length };
+    const failedInvoiceNumbers = new Set((data.errors || []).map((e) => e.invoiceNumber));
+    const succeeded = pending.filter((i) => !failedInvoiceNumbers.has(i.invoiceNumber));
+    const failed = pending.filter((i) => failedInvoiceNumbers.has(i.invoiceNumber));
+
+    if (succeeded.length > 0) {
+      await markInvoicesSynced(succeeded.map((i) => i.localId));
+    }
+    if (failed.length > 0) {
+      console.error(`[OfflineSync] ${failed.length} invoice(s) failed to sync and remain queued for retry:`, data.errors);
+    }
+
+    console.log(`[OfflineSync] ✅ Synced ${succeeded.length}/${pending.length} offline invoices to the cloud.`);
+    return { synced: succeeded.length, failed: failed.length, errors: data.errors };
   } catch (err) {
     console.error('[OfflineSync] Sync failed:', err);
     return { synced: 0, failed: pending.length };

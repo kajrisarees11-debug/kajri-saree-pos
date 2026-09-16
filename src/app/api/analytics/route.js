@@ -32,14 +32,18 @@ export async function GET() {
       const todaySales = todayInvoices.reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
       const udhaar = udhaarResult[0] || { total: 0, count: 0 };
 
-      // Enrich recent invoices with customer names
-      const enrichedInvoices = await Promise.all(recentInvoices.map(async inv => {
-        let customerData = null;
-        if (inv.customerId) {
-          const cust = await POSCustomer.findById(inv.customerId).lean();
-          if (cust) customerData = { _id: cust._id.toString(), name: cust.name };
-        }
-        return { ...inv, _id: inv._id.toString(), items: inv.items || [], customerId: customerData };
+      // Enrich recent invoices with customer names via one batched lookup
+      // instead of a separate findById round-trip per invoice.
+      const customerIds = [...new Set(recentInvoices.filter(inv => inv.customerId).map(inv => inv.customerId.toString()))];
+      const customerDocs = customerIds.length
+        ? await POSCustomer.find({ _id: { $in: customerIds } }).lean()
+        : [];
+      const customerById = new Map(customerDocs.map(c => [c._id.toString(), { _id: c._id.toString(), name: c.name }]));
+      const enrichedInvoices = recentInvoices.map(inv => ({
+        ...inv,
+        _id: inv._id.toString(),
+        items: inv.items || [],
+        customerId: inv.customerId ? (customerById.get(inv.customerId.toString()) || null) : null,
       }));
 
       return NextResponse.json({

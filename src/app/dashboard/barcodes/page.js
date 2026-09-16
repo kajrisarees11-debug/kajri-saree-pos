@@ -1,41 +1,34 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { Printer, RefreshCcw, Search, X, CheckSquare, Square, Sliders, Copy } from 'lucide-react';
+import { useData } from '@/context/DataContext';
 
 export default function BarcodePage() {
+  // Sourced from the shared DataContext (not its own independent fetch) so a
+  // barcode change made here is immediately visible on Products/POS without
+  // needing a full page reload, and vice versa.
+  const { products: sharedProducts, loading, refresh } = useData();
   const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  
+
   // Print modal state
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [labelQuantities, setLabelQuantities] = useState({}); // { productId: qty }
   const [labelSize, setLabelSize] = useState('standard'); // 'standard' (50x25mm), 'compact' (38x25mm), 'a4' (sheet)
 
-  const fetchProducts = async () => {
-    try {
-      const res = await fetch('/api/products');
-      const data = await res.json();
-      if (data.success) {
-        setProducts(data.data.map(p => ({ ...p, selected: false })));
-        // Initialize 1 label per product
-        const initialQty = {};
-        data.data.forEach(p => {
-          initialQty[p._id] = 1;
-        });
-        setLabelQuantities(initialQty);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Overlay local-only UI state (`selected`) onto the shared product list,
+  // re-syncing whenever it changes (e.g. after refresh('products')).
   useEffect(() => {
-    const t = setTimeout(() => fetchProducts(), 0);
-    return () => clearTimeout(t);
-  }, []);
+    setProducts(prev => sharedProducts.map(p => {
+      const existing = prev.find(x => x._id === p._id);
+      return { ...p, selected: existing?.selected || false };
+    }));
+    setLabelQuantities(prev => {
+      const next = { ...prev };
+      sharedProducts.forEach(p => { if (!(p._id in next)) next[p._id] = 1; });
+      return next;
+    });
+  }, [sharedProducts]);
 
   const toggleSelect = (id) => {
     setProducts(products.map(p => p._id === id ? { ...p, selected: !p.selected } : p));
@@ -55,22 +48,32 @@ export default function BarcodePage() {
       return p;
     });
 
-    setProducts(updatedProducts);
-
     const modified = updatedProducts.filter(p => p.isModified);
-    if (modified.length > 0) {
-      try {
-        await fetch('/api/products', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(modified)
-        });
-        alert(`Generated barcodes for ${modified.length} products!`);
-      } catch (err) {
-        console.error("Failed to save barcodes:", err);
-      }
-    } else {
+    if (modified.length === 0) {
       alert("All products already have barcodes!");
+      return;
+    }
+
+    // Don't apply the generated barcodes to local state until the server
+    // has actually confirmed the write — otherwise a failed/rejected save
+    // still leaves the UI (and anything printed from it) showing barcodes
+    // that were never persisted.
+    try {
+      const res = await fetch('/api/products', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(modified)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Server rejected the update (status ${res.status})`);
+      }
+      setProducts(updatedProducts);
+      await refresh('products'); // so Products/POS/etc. pick up the new barcodes immediately
+      alert(`Generated barcodes for ${modified.length} products!`);
+    } catch (err) {
+      console.error("Failed to save barcodes:", err);
+      alert(`Failed to generate barcodes: ${err.message}`);
     }
   };
 

@@ -35,6 +35,15 @@ function getRange(period, customStart, customEnd) {
   }
 }
 
+function Row({ label, value, bold, indent, color, border }) {
+  return (
+    <div className={`flex justify-between items-center py-2.5 px-4 ${border ? 'border-t border-gray-200 mt-1' : ''} ${bold ? 'bg-gray-50 rounded-lg' : ''}`}>
+      <span className={`text-sm ${indent ? 'pl-4 text-gray-500' : bold ? 'font-bold text-gray-900' : 'text-gray-700'}`}>{label}</span>
+      <span className={`text-sm font-semibold ${color || (bold ? 'text-gray-900' : 'text-gray-700')} ${bold ? 'text-base font-bold' : ''}`}>{fmt(value)}</span>
+    </div>
+  );
+}
+
 export default function ProfitLossPage() {
   const { invoices, purchases, expenses } = useData();
   const [period, setPeriod] = useState('this_month');
@@ -51,14 +60,20 @@ export default function ProfitLossPage() {
     const returnInvoices = invoices.filter(inv => inv.status === 'Returned' && inRange(inv.createdAt || inv.date));
 
     const grossRevenue   = saleInvoices.reduce((s, inv) => s + (inv.grandTotal || 0), 0);
-    const salesReturns   = returnInvoices.reduce((s, inv) => s + (inv.grandTotal || 0), 0);
+    // Use the actual refunded amount, not the full original sale — an
+    // invoice with even a single-item partial return is marked 'Returned'
+    // in full, but only refundTotal was ever actually paid back.
+    const salesReturns   = returnInvoices.reduce((s, inv) => s + (inv.refundTotal || 0), 0);
     const netRevenue     = grossRevenue - salesReturns;
 
     const taxCollected   = saleInvoices.reduce((s, inv) => s + (inv.taxTotal || 0), 0);
     const discountsGiven = saleInvoices.reduce((s, inv) => s + (inv.discountTotal || 0), 0);
 
     // ── Cost of Goods (from purchases)
-    const periodPurchases = purchases.filter(p => inRange(p.createdAt || p.date));
+    // Returned purchases are excluded — the goods (and their cost) went back
+    // to the supplier. (Purchase returns don't currently track a partial
+    // refund amount the way invoice returns do, so this is all-or-nothing.)
+    const periodPurchases = purchases.filter(p => inRange(p.createdAt || p.date) && p.status !== 'Returned');
     const totalPurchases  = periodPurchases.reduce((s, p) => s + (p.totalAmount || 0), 0);
 
     // ── Gross Profit
@@ -128,13 +143,6 @@ export default function ProfitLossPage() {
     link.click();
     document.body.removeChild(link);
   };
-
-  const Row = ({ label, value, bold, indent, color, border }) => (
-    <div className={`flex justify-between items-center py-2.5 px-4 ${border ? 'border-t border-gray-200 mt-1' : ''} ${bold ? 'bg-gray-50 rounded-lg' : ''}`}>
-      <span className={`text-sm ${indent ? 'pl-4 text-gray-500' : bold ? 'font-bold text-gray-900' : 'text-gray-700'}`}>{label}</span>
-      <span className={`text-sm font-semibold ${color || (bold ? 'text-gray-900' : 'text-gray-700')} ${bold ? 'text-base font-bold' : ''}`}>{fmt(value)}</span>
-    </div>
-  );
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">

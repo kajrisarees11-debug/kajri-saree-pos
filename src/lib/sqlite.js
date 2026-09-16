@@ -44,15 +44,23 @@ function getDbPath() {
 }
 
 const dbPath = getDbPath();
-console.log(`[SQLite] Initializing local database at: ${dbPath}`);
 
-const db = new Database(dbPath, { 
-  // Enable WAL mode for better concurrent performance
-  verbose: process.env.DEBUG_SQL ? console.log : null 
-});
-
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+// Cache the connection on `global` the same way db.js caches its Mongoose
+// connection — without this, every `next dev` hot-module-reload of a file
+// that imports this module re-executes it, opening another better-sqlite3
+// handle on the same WAL-mode file without closing the previous one, which
+// leaks file descriptors and can eventually produce intermittent
+// "SQLITE_BUSY: database is locked" errors during a long dev session.
+let db = global.__kajriSqliteDb;
+if (!db) {
+  console.log(`[SQLite] Initializing local database at: ${dbPath}`);
+  db = new Database(dbPath, {
+    verbose: process.env.DEBUG_SQL ? console.log : null
+  });
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  global.__kajriSqliteDb = db;
+}
 
 /**
  * Initialize all schemas
@@ -132,6 +140,7 @@ function initializeSchemas() {
     CREATE TABLE IF NOT EXISTS invoices (
       _id TEXT PRIMARY KEY,
       invoiceNumber TEXT UNIQUE NOT NULL,
+      idempotencyKey TEXT,
       customerId TEXT,
       items TEXT NOT NULL, -- JSON array
       subTotal REAL DEFAULT 0,
@@ -186,6 +195,39 @@ function initializeSchemas() {
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS bank_accounts (
+      _id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      accountNo TEXT,
+      ifsc TEXT,
+      openingBalance REAL DEFAULT 0,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS bank_transactions (
+      _id TEXT PRIMARY KEY,
+      bankAccountId TEXT,
+      type TEXT NOT NULL, -- 'in' | 'out'
+      amount REAL NOT NULL,
+      description TEXT,
+      category TEXT DEFAULT 'Manual',
+      date DATETIME DEFAULT CURRENT_TIMESTAMP,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS cash_transactions (
+      _id TEXT PRIMARY KEY,
+      type TEXT NOT NULL, -- 'in' | 'out'
+      amount REAL NOT NULL,
+      category TEXT DEFAULT 'Other',
+      description TEXT,
+      date DATETIME DEFAULT CURRENT_TIMESTAMP,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS settings (
       _id TEXT PRIMARY KEY,
       storeName TEXT,
@@ -203,6 +245,42 @@ function initializeSchemas() {
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  migrateSchema();
+}
+
+/**
+ * `CREATE TABLE IF NOT EXISTS` above only creates tables that don't exist yet
+ * — it never adds a newly-introduced column to an already-existing database
+ * from an earlier install. This adds any such columns (and safe indexes)
+ * after the fact, each independently guarded so one failure (e.g. a unique
+ * index that can't be created yet because older data already has
+ * duplicates) doesn't stop the rest of the migration or crash startup.
+ */
+function migrateSchema() {
+  const hasColumn = (table, column) =>
+    db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+
+  const steps = [
+    () => { if (!hasColumn('invoices', 'idempotencyKey')) db.exec('ALTER TABLE invoices ADD COLUMN idempotencyKey TEXT'); },
+    () => { if (!hasColumn('purchases', 'amountPaid')) db.exec('ALTER TABLE purchases ADD COLUMN amountPaid REAL DEFAULT 0'); },
+    // Partial unique indexes — safe to (re)create on every boot; only ever
+    // reject an insert going forward, never destructive to existing rows.
+    () => db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_idempotency ON invoices(idempotencyKey) WHERE idempotencyKey IS NOT NULL`),
+    () => db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_mobile ON customers(mobileNumber) WHERE mobileNumber IS NOT NULL AND mobileNumber != ''`),
+    () => db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku ON products(sku) WHERE sku IS NOT NULL AND sku != ''`),
+    () => db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode) WHERE barcode IS NOT NULL AND barcode != ''`),
+  ];
+
+  for (const step of steps) {
+    try {
+      step();
+    } catch (err) {
+      // Most likely cause: pre-existing duplicate data blocking a unique
+      // index. Log it so it's discoverable, but never block app startup.
+      console.error('[SQLite] Schema migration step failed (non-fatal):', err.message);
+    }
+  }
 }
 
 initializeSchemas();

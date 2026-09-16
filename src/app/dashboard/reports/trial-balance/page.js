@@ -5,17 +5,22 @@ import { Printer, RefreshCw } from 'lucide-react';
 export default function TrialBalancePage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const fetchAccounting = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch('/api/reports/accounting');
       const json = await res.json();
       if (json.success) {
         setData(json.data.trialBalance);
+      } else {
+        setError(json.error || 'Failed to load trial balance.');
       }
     } catch (err) {
       console.error(err);
+      setError(err.message || 'Network error.');
     } finally {
       setLoading(false);
     }
@@ -24,6 +29,17 @@ export default function TrialBalancePage() {
   useEffect(() => {
     fetchAccounting();
   }, []);
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
+        <p className="text-red-600 font-medium">Couldn&apos;t load the trial balance: {error}</p>
+        <button onClick={fetchAccounting} className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary-light transition-colors text-sm font-medium">
+          <RefreshCw className="w-4 h-4" /> Retry
+        </button>
+      </div>
+    );
+  }
 
   if (loading || !data) {
     return (

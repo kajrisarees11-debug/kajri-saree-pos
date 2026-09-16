@@ -6,11 +6,16 @@ import { Banknote, Plus, ArrowUp, ArrowDown, Search, Check, AlertTriangle, X } f
 const CATEGORIES = ['Opening Balance', 'Cash Sale', 'Cash Receipt', 'Cash Payment', 'Expense', 'Other'];
 
 export default function CashPage() {
-  const { invoices, expenses } = useData();
-  const [txns, setTxns] = useState([]);
+  const { invoices, expenses, cashTransactions, refresh } = useData();
   const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ type: 'in', amount: '', category: 'Other', description: '', date: new Date().toISOString().split('T')[0] });
   const [toast, setToast] = useState(null);
+
+  const showToast = (type, msg) => {
+    setToast({ type, msg });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   // Derive cash ledger from invoices + expenses + manual entries
   const cashLedger = useMemo(() => {
@@ -40,21 +45,36 @@ export default function CashPage() {
       });
     });
 
-    // Manual transactions
-    txns.forEach(t => entries.push({ ...t, date: new Date(t.date), id: t.id }));
+    // Manual transactions (persisted via /api/cash/transactions)
+    cashTransactions.forEach(t => entries.push({ ...t, id: t._id, date: new Date(t.date) }));
 
     return entries.sort((a, b) => b.date - a.date);
-  }, [invoices, expenses, txns]);
+  }, [invoices, expenses, cashTransactions]);
 
   const balance = cashLedger.reduce((s, e) => e.type === 'in' ? s + e.amount : s - e.amount, 0);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!form.amount || Number(form.amount) <= 0) return;
-    setTxns(prev => [...prev, { ...form, amount: Number(form.amount), id: `manual_${Date.now()}` }]);
-    setToast({ type: 'success', msg: 'Transaction recorded.' });
-    setModalOpen(false);
-    setForm({ type: 'in', amount: '', category: 'Other', description: '', date: new Date().toISOString().split('T')[0] });
-    setTimeout(() => setToast(null), 3000);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/cash/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to save transaction');
+
+      await refresh('cashTransactions');
+      showToast('success', 'Transaction recorded.');
+      setModalOpen(false);
+      setForm({ type: 'in', amount: '', category: 'Other', description: '', date: new Date().toISOString().split('T')[0] });
+    } catch (err) {
+      console.error('[Cash] Failed to record transaction:', err);
+      showToast('error', err.message || 'Failed to record transaction.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -167,9 +187,9 @@ export default function CashPage() {
             </div>
             <div className="p-5 border-t border-gray-100 flex gap-3">
               <button onClick={() => setModalOpen(false)} className="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-              <button onClick={handleAdd} disabled={!form.amount || Number(form.amount) <= 0}
+              <button onClick={handleAdd} disabled={!form.amount || Number(form.amount) <= 0 || saving}
                 className="flex-1 py-2.5 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
-              >Add Entry</button>
+              >{saving ? 'Saving…' : 'Add Entry'}</button>
             </div>
           </div>
         </div>

@@ -87,7 +87,10 @@ export default function SuppliersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {suppliers.map((sup) => (
+              {loading && (
+                <tr><td colSpan="4" className="px-6 py-8 text-center text-gray-500">Loading suppliers...</td></tr>
+              )}
+              {!loading && suppliers.map((sup) => (
                 <tr key={sup._id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-gray-900">{sup.name}</div>

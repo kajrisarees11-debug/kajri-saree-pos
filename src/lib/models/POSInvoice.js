@@ -13,6 +13,10 @@ const InvoiceItemSchema = new mongoose.Schema({
 const POSInvoiceSchema = new mongoose.Schema(
   {
     invoiceNumber: { type: String, required: true, unique: true },
+    // Client-generated key so a retried/duplicated submission of the same
+    // checkout (e.g. the response to a successful create was lost) can be
+    // recognized and returned instead of creating a second sale.
+    idempotencyKey: { type: String, index: true, sparse: true, unique: true },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'POSCustomer' },
     date: { type: Date, default: Date.now },
     items: [InvoiceItemSchema],

@@ -20,6 +20,9 @@ export default function PurchasesPage() {
   const [searchResults, setSearchResults] = useState([]);
   const searchTimeoutRef = useRef(null);
 
+  // Purchase list search (invoice number / supplier name)
+  const [listSearch, setListSearch] = useState('');
+
   // Local Product Search
   useEffect(() => {
     if (!searchQuery) {
@@ -62,15 +65,22 @@ export default function PurchasesPage() {
     setItems(items.filter((_, i) => i !== index));
   };
 
+  const filteredPurchases = purchases.filter(p => {
+    if (!listSearch) return true;
+    const q = listSearch.toLowerCase();
+    const supplierName = p.supplierId?.name || suppliers.find(s => s._id === (p.supplierId?._id || p.supplierId))?.name || '';
+    return p.invoiceNumber?.toLowerCase().includes(q) || supplierName.toLowerCase().includes(q);
+  });
+
   const subTotal = items.reduce((sum, item) => sum + (item.purchasePrice * item.quantity), 0);
   const taxTotal = items.reduce((sum, item) => sum + (((item.purchasePrice * item.tax) / 100) * item.quantity), 0);
   const grandTotal = subTotal + taxTotal;
 
   const handleSavePurchase = async () => {
-    if (!isOnline) {
-      alert("Purchases can only be recorded when online. Please reconnect.");
-      return;
-    }
+    // Writes go through the local API regardless of internet state — on the
+    // desktop app that's a local SQLite write either way, and blocking it
+    // here contradicted the app's own offline-first design (goods can
+    // arrive from a supplier during an internet outage same as any other day).
     if (!supplierId || !invoiceNumber || items.length === 0) {
       alert("Please fill supplier, invoice number, and add at least one item.");
       return;
@@ -120,7 +130,7 @@ export default function PurchasesPage() {
     <div className="max-w-6xl mx-auto">
       {!isOnline && (
         <div className="mb-4 flex items-center gap-2 bg-orange-50 border border-orange-200 text-orange-700 px-4 py-2.5 rounded-lg text-sm font-medium">
-          <WifiOff className="w-4 h-4" /> Offline mode — viewing only. Stock inward requires internet.
+          <WifiOff className="w-4 h-4" /> Offline mode — purchases are saved locally and sync to the cloud once back online.
         </div>
       )}
       {/* Header */}
@@ -288,8 +298,10 @@ export default function PurchasesPage() {
           <div className="p-4 border-b border-gray-200 flex items-center">
             <div className="relative w-full max-w-md">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input 
-                type="text" 
+              <input
+                type="text"
+                value={listSearch}
+                onChange={(e) => setListSearch(e.target.value)}
                 placeholder="Search by invoice or supplier..."
                 className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary text-sm"
               />
@@ -313,11 +325,13 @@ export default function PurchasesPage() {
                   <tr>
                     <td colSpan="6" className="px-6 py-10 text-center text-gray-500">Loading purchases...</td>
                   </tr>
-                ) : purchases.length === 0 ? (
+                ) : filteredPurchases.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="px-6 py-10 text-center text-gray-500">No purchases found.</td>
+                    <td colSpan="6" className="px-6 py-10 text-center text-gray-500">
+                      {listSearch ? 'No purchases match your search.' : 'No purchases found.'}
+                    </td>
                   </tr>
-                ) : purchases.map((purchase) => (
+                ) : filteredPurchases.map((purchase) => (
                   <tr key={purchase._id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 text-sm">{new Date(purchase.date).toLocaleDateString()}</td>
                     <td className="px-6 py-4 font-medium text-primary">{purchase.invoiceNumber}</td>

@@ -8,14 +8,18 @@ const DEFAULT_BANKS = [
 ];
 
 export default function BankPage() {
-  const { invoices, expenses, purchases } = useData();
-  const [banks, setBanks] = useState([]);
+  const { invoices, expenses, bankAccounts: banks, bankTransactions: manualTxns, refresh } = useData();
   const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: '', accountNo: '', ifsc: '', openingBalance: '' });
   const [toast, setToast] = useState(null);
   const [txnModal, setTxnModal] = useState(null); // { bankId, type }
   const [txnForm, setTxnForm] = useState({ amount: '', description: '' });
-  const [manualTxns, setManualTxns] = useState([]);
+
+  const showToast = (type, msg) => {
+    setToast({ type, msg });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   // Derive bank transactions from invoices where payment = Bank Transfer / Card / UPI
   const bankTxns = useMemo(() => {
@@ -46,7 +50,7 @@ export default function BankPage() {
         });
       });
 
-    manualTxns.forEach(t => entries.push({ ...t, date: new Date(t.date) }));
+    manualTxns.forEach(t => entries.push({ ...t, id: t._id, date: new Date(t.date) }));
     return entries.sort((a, b) => b.date - a.date);
   }, [invoices, expenses, manualTxns]);
 
@@ -55,29 +59,69 @@ export default function BankPage() {
   const openingBalance = banks.reduce((s, b) => s + (b.openingBalance || 0), 0);
   const netBalance = openingBalance + totalIn - totalOut;
 
-  const addBank = () => {
+  const addBank = async () => {
     if (!form.name) return;
-    setBanks(prev => [...prev, { ...form, id: `bank_${Date.now()}`, openingBalance: Number(form.openingBalance) || 0 }]);
-    setForm({ name: '', accountNo: '', ifsc: '', openingBalance: '' });
-    setModalOpen(false);
-    setToast({ type: 'success', msg: 'Bank account added.' });
-    setTimeout(() => setToast(null), 3000);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/bank/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, openingBalance: Number(form.openingBalance) || 0 }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to save bank account');
+
+      await refresh('bankAccounts');
+      setForm({ name: '', accountNo: '', ifsc: '', openingBalance: '' });
+      setModalOpen(false);
+      showToast('success', 'Bank account added.');
+    } catch (err) {
+      console.error('[Bank] Failed to add account:', err);
+      showToast('error', err.message || 'Failed to add bank account.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const addTxn = () => {
+  const removeBank = async (id) => {
+    try {
+      const res = await fetch(`/api/bank/accounts/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to remove bank account');
+      await refresh('bankAccounts');
+    } catch (err) {
+      console.error('[Bank] Failed to remove account:', err);
+      showToast('error', err.message || 'Failed to remove bank account.');
+    }
+  };
+
+  const addTxn = async () => {
     if (!txnForm.amount || Number(txnForm.amount) <= 0) return;
-    setManualTxns(prev => [...prev, {
-      id: `manual_${Date.now()}`,
-      date: new Date().toISOString(),
-      type: txnModal.type,
-      amount: Number(txnForm.amount),
-      description: txnForm.description || (txnModal.type === 'in' ? 'Bank Receipt' : 'Bank Payment'),
-      category: 'Manual',
-    }]);
-    setTxnModal(null);
-    setTxnForm({ amount: '', description: '' });
-    setToast({ type: 'success', msg: 'Transaction recorded.' });
-    setTimeout(() => setToast(null), 3000);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/bank/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: txnModal.type,
+          amount: Number(txnForm.amount),
+          description: txnForm.description || (txnModal.type === 'in' ? 'Bank Receipt' : 'Bank Payment'),
+          category: 'Manual',
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || 'Failed to save transaction');
+
+      await refresh('bankTransactions');
+      setTxnModal(null);
+      setTxnForm({ amount: '', description: '' });
+      showToast('success', 'Transaction recorded.');
+    } catch (err) {
+      console.error('[Bank] Failed to record transaction:', err);
+      showToast('error', err.message || 'Failed to record transaction.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -132,7 +176,7 @@ export default function BankPage() {
       {banks.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {banks.map(bank => (
-            <div key={bank.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start gap-4">
+            <div key={bank._id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex items-start gap-4">
               <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                 <Building2 className="w-5 h-5 text-primary" />
               </div>
@@ -144,7 +188,7 @@ export default function BankPage() {
                   Opening: ₹{(bank.openingBalance || 0).toLocaleString('en-IN')}
                 </p>
               </div>
-              <button onClick={() => setBanks(prev => prev.filter(b => b.id !== bank.id))}
+              <button onClick={() => removeBank(bank._id)}
                 className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-red-500 transition-colors">
                 <X className="w-4 h-4" />
               </button>
@@ -221,7 +265,7 @@ export default function BankPage() {
             </div>
             <div className="p-5 border-t border-gray-100 flex gap-3">
               <button onClick={() => setModalOpen(false)} className="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50">Cancel</button>
-              <button onClick={addBank} disabled={!form.name} className="flex-1 py-2.5 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary/90 disabled:opacity-50">Add Account</button>
+              <button onClick={addBank} disabled={!form.name || saving} className="flex-1 py-2.5 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary/90 disabled:opacity-50">{saving ? 'Saving…' : 'Add Account'}</button>
             </div>
           </div>
         </div>
@@ -249,9 +293,9 @@ export default function BankPage() {
             </div>
             <div className="p-5 border-t border-gray-100 flex gap-3">
               <button onClick={() => setTxnModal(null)} className="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50">Cancel</button>
-              <button onClick={addTxn} disabled={!txnForm.amount || Number(txnForm.amount) <= 0}
+              <button onClick={addTxn} disabled={!txnForm.amount || Number(txnForm.amount) <= 0 || saving}
                 className={`flex-1 py-2.5 text-white rounded-lg text-sm font-semibold disabled:opacity-50 ${txnModal.type === 'in' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>
-                Record {txnModal.type === 'in' ? 'Receipt' : 'Payment'}
+                {saving ? 'Saving…' : `Record ${txnModal.type === 'in' ? 'Receipt' : 'Payment'}`}
               </button>
             </div>
           </div>

@@ -84,7 +84,10 @@ export default function ExpensesPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {expenses.map((exp) => (
+            {loading && (
+              <tr><td colSpan="4" className="px-6 py-8 text-center text-gray-500">Loading expenses...</td></tr>
+            )}
+            {!loading && expenses.map((exp) => (
               <tr key={exp._id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4 text-sm text-gray-900">{new Date(exp.date).toLocaleDateString()}</td>
                 <td className="px-6 py-4 text-sm font-medium text-gray-900">{exp.description || exp.title || '—'}</td>

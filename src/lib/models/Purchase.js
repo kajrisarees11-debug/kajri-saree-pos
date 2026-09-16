@@ -18,6 +18,10 @@ const PurchaseSchema = new mongoose.Schema(
     totalAmount: { type: Number, required: true },
     amountPaid: { type: Number, default: 0 },
     paymentStatus: { type: String, enum: ['Paid', 'Partial', 'Pending'], default: 'Pending' },
+    // Completion/return status — mirrors the SQLite `purchases.status` column.
+    // Distinct from paymentStatus above (which tracks whether it's been paid).
+    status: { type: String, default: 'Completed' },
+    notes: { type: String },
   },
   { timestamps: true }
 );

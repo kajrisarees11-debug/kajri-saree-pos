@@ -5,6 +5,12 @@ import { Save, Download } from 'lucide-react';
 export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [systemPrinters, setSystemPrinters] = useState([]);
+  // Real settings haven't loaded yet — the form is still just showing
+  // hardcoded placeholders. Saving now would overwrite whatever the real,
+  // already-saved settings are with those placeholders, so Save stays
+  // disabled (and a banner shown) until a load actually succeeds.
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const [formData, setFormData] = useState({
     storeName: 'Kajri Sarees',
     phone: '',
@@ -18,6 +24,23 @@ export default function SettingsPage() {
     printerName: '',
     autoPrint: false
   });
+
+  const fetchSettings = async () => {
+    setLoadError(null);
+    try {
+      const res = await fetch('/api/settings');
+      const data = await res.json();
+      if (data.success && data.data) {
+        setFormData(prev => ({ ...prev, ...data.data }));
+        setSettingsLoaded(true);
+      } else {
+        setLoadError(data.error || 'Server returned an unsuccessful response.');
+      }
+    } catch (err) {
+      console.error("Error fetching settings:", err);
+      setLoadError(err.message || 'Network error.');
+    }
+  };
 
   useEffect(() => {
     // Fetch installed printers if in Electron environment
@@ -33,22 +56,15 @@ export default function SettingsPage() {
     };
     loadPrinters();
 
-    const fetchSettings = async () => {
-      try {
-        const res = await fetch('/api/settings');
-        const data = await res.json();
-        if (data.success && data.data) {
-          setFormData(prev => ({ ...prev, ...data.data }));
-        }
-      } catch (err) {
-        console.error("Error fetching settings:", err);
-      }
-    };
     fetchSettings();
   }, []);
-  
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!settingsLoaded) {
+      alert("Can't save yet — your current settings haven't finished loading, so saving now would overwrite them with blank placeholders. Click Retry and try again.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch('/api/settings', {
@@ -77,15 +93,23 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Business Settings</h1>
           <p className="text-gray-500 text-sm mt-1">Configure your store details, taxes, and print settings.</p>
         </div>
-        <button 
+        <button
           onClick={handleSubmit}
-          disabled={loading}
+          disabled={loading || !settingsLoaded}
+          title={!settingsLoaded ? "Waiting for current settings to load before this can save safely" : undefined}
           className="flex items-center gap-2 bg-primary text-white px-6 py-2.5 rounded-lg hover:bg-primary-light transition-colors disabled:opacity-70"
         >
           <Save className="w-4 h-4" />
           {loading ? 'Saving...' : 'Save Settings'}
         </button>
       </div>
+
+      {loadError && (
+        <div className="mb-6 flex items-center justify-between gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+          <span>Couldn&apos;t load your current settings ({loadError}) — editing and saving is disabled until this succeeds, to avoid overwriting your real settings with blank placeholders.</span>
+          <button type="button" onClick={fetchSettings} className="shrink-0 font-semibold underline hover:no-underline">Retry</button>
+        </div>
+      )}
 
       <form className="space-y-6" onSubmit={handleSubmit}>
         

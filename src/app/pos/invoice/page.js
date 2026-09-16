@@ -6,12 +6,14 @@ import { useSearchParams } from 'next/navigation';
 function A4InvoiceContent() {
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const searchParams = useSearchParams();
 
   useEffect(() => {
     const fetchInvoice = async () => {
       const id = searchParams.get('id');
       if (!id) {
+        setError('No invoice ID provided.');
         setLoading(false);
         return;
       }
@@ -20,9 +22,12 @@ function A4InvoiceContent() {
         const data = await res.json();
         if (data.success) {
           setInvoice(data.data);
+        } else {
+          setError(data.error || 'Invoice not found.');
         }
       } catch (err) {
         console.error(err);
+        setError(err.message || 'Network error.');
       } finally {
         setLoading(false);
       }
@@ -39,7 +44,8 @@ function A4InvoiceContent() {
     }
   }, [invoice, loading]);
 
-  if (!invoice) return <div>Loading...</div>;
+  if (loading) return <div className="p-10 text-center">Loading...</div>;
+  if (error || !invoice) return <div className="p-10 text-center text-red-500">{error || 'Invoice not found.'}</div>;
 
   return (
     <div className="bg-gray-100 min-h-screen flex flex-col items-center py-10 print:bg-white print:py-0">

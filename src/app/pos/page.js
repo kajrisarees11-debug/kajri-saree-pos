@@ -15,6 +15,27 @@ import {
   saveOfflineInvoice,
 } from '@/lib/offlineSync';
 
+// A short id persisted per browser/device, used only to keep offline-generated
+// invoice numbers from colliding across terminals (or after a clock change).
+function getDeviceId() {
+  if (typeof window === 'undefined') return 'srv';
+  try {
+    let id = localStorage.getItem('kajri_pos_device_id');
+    if (!id) {
+      id = Math.random().toString(36).slice(2, 8);
+      localStorage.setItem('kajri_pos_device_id', id);
+    }
+    return id;
+  } catch {
+    return 'nols';
+  }
+}
+
+function generateIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function POSPage() {
   const [cart, setCart] = useState([]);
   const [barcodeInput, setBarcodeInput] = useState('');
@@ -251,12 +272,20 @@ export default function POSPage() {
     if (cart.length === 0) return;
     setIsCheckingOut(true);
 
+    // One idempotency key per checkout attempt, reused for BOTH the online
+    // POST and (if that fails) the offline-queued copy of the same sale. If
+    // the online request actually succeeded server-side but the response
+    // was lost before we saw it, the server recognizes this key on the
+    // later offline-sync retry and returns the original invoice instead of
+    // creating a second, fully-processed duplicate sale.
+    const idempotencyKey = generateIdempotencyKey();
+
     const invoicePayload = {
-      // eslint-disable-next-line react-hooks/purity
-      invoiceNumber: `INV-${Date.now()}`,
+      idempotencyKey,
       customerId: customer?._id || null,
       items: cart.map(item => ({
         productId: item._id,
+        name: item.name,
         quantity: item.quantity,
         price: item.price || 0,
         mrp: item.mrp || item.price || 0,
@@ -270,6 +299,9 @@ export default function POSPage() {
       paymentMethod: paymentMethod,
       amountPaid: amountPaid ? Number(amountPaid) : grandTotal,
       balance: Math.max(0, balance)
+      // invoiceNumber intentionally omitted — the server assigns one. The
+      // client used to generate its own (`INV-${Date.now()}`), which could
+      // collide across terminals or after a clock adjustment.
     };
 
     try {
@@ -293,11 +325,42 @@ export default function POSPage() {
       }
     } catch (err) {
       console.error(err);
-      alert('Network error — Saving bill offline to local queue...');
-      await saveOfflineInvoice(invoicePayload);
+
+      // A device-unique, collision-resistant invoice number for the offline
+      // queue/receipt (the server still assigns the real one once this syncs).
+      // eslint-disable-next-line react-hooks/purity -- runs inside an event handler, not render
+      const offlineInvoiceNumber = `OFF-${getDeviceId()}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const offlinePayload = { ...invoicePayload, invoiceNumber: offlineInvoiceNumber };
+
+      try {
+        await saveOfflineInvoice(offlinePayload);
+      } catch (queueErr) {
+        // The sale isn't on the server AND couldn't be queued locally — it
+        // would otherwise vanish with no trace anywhere but the console.
+        console.error('[POS] CRITICAL: failed to save sale both online and offline:', queueErr);
+        alert('CRITICAL: This sale could not be saved online OR offline. Please write down the items and amount manually, then contact support. Do not hand over goods until this is resolved.');
+        setIsCheckingOut(false);
+        return;
+      }
+
+      alert('Network error — Bill saved offline to local queue.');
       await refreshPendingCount();
       setOfflineSaved(true);
       setTimeout(() => setOfflineSaved(false), 4000);
+
+      // Print a receipt now from the local data — there's no server _id yet
+      // to fetch by, so stash the full (name-enriched) invoice for the
+      // receipt tab to read directly instead of never printing one at all.
+      try {
+        sessionStorage.setItem('kajri_offline_receipt', JSON.stringify({
+          ...offlinePayload,
+          createdAt: new Date().toISOString(),
+        }));
+        window.open('/pos/receipt?offline=1', '_blank');
+      } catch (storageErr) {
+        console.error('[POS] Could not open offline receipt:', storageErr);
+      }
+
       setCart([]);
       setCustomer(null);
       setDiscount(0);
