@@ -1,33 +1,18 @@
 import { NextResponse } from 'next/server';
-import db, { generateObjectId, queueSync } from '@/lib/sqlite';
+import { customers } from '@/lib/dataAdapter';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const search = searchParams.get('search');
-    const mobile = searchParams.get('mobile');
-
-    let query = 'SELECT * FROM customers';
-    const params = [];
-
-    if (mobile) {
-      query += ' WHERE mobileNumber = ?';
-      params.push(mobile);
-    } else if (search) {
-      query += ' WHERE name LIKE ? OR mobileNumber LIKE ?';
-      params.push(`%${search}%`, `%${search}%`);
-    }
-
-    query += ' ORDER BY createdAt DESC LIMIT 50';
-
-    const stmt = db.prepare(query);
-    const customers = stmt.all(...params);
-
-    return NextResponse.json({ success: true, data: customers });
+    const data = await customers.getAll({
+      search: searchParams.get('search'),
+      mobile: searchParams.get('mobile'),
+    });
+    return NextResponse.json({ success: true, data });
   } catch (error) {
-    console.error('API Error:', error);
+    console.error('API Error [customers GET]:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
@@ -35,48 +20,30 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const body = await request.json();
-    
-    // Check if customer already exists by mobile
+
+    // Return existing customer if mobile already registered
     if (body.mobileNumber) {
-      const existing = db.prepare('SELECT * FROM customers WHERE mobileNumber = ?').get(body.mobileNumber);
-      if (existing) {
-        return NextResponse.json({ success: true, data: existing }, { status: 200 }); // Return existing
-      }
+      const existing = await customers.findByMobile(body.mobileNumber);
+      if (existing) return NextResponse.json({ success: true, data: existing });
     }
 
-    const _id = body._id || generateObjectId();
-    const timestamp = new Date().toISOString();
-    
-    const customerData = {
-      _id,
-      name: body.name || '',
-      mobileNumber: body.mobileNumber || null,
-      email: body.email || null,
-      address: body.address || null,
-      city: body.city || null,
-      pincode: body.pincode || null,
-      outstandingBalance: body.outstandingBalance || 0,
-      totalPurchases: body.totalPurchases || 0,
-      gstin: body.gstin || null,
-      customerType: body.customerType || 'Retail',
-      createdAt: timestamp,
-      updatedAt: timestamp
-    };
-
-    const columns = Object.keys(customerData);
-    const placeholders = columns.map(() => '?').join(', ');
-    const values = Object.values(customerData);
-
-    const stmt = db.prepare(`INSERT INTO customers (${columns.join(', ')}) VALUES (${placeholders})`);
-    
-    db.transaction(() => {
-      stmt.run(...values);
-      queueSync('INSERT', 'customers', _id, customerData);
-    })();
-    
-    return NextResponse.json({ success: true, data: customerData }, { status: 201 });
+    const data = await customers.create(body);
+    return NextResponse.json({ success: true, data }, { status: 201 });
   } catch (error) {
-    console.error('API Error:', error);
+    console.error('API Error [customers POST]:', error);
+    return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+  }
+}
+
+export async function PUT(request) {
+  try {
+    const body = await request.json();
+    const { _id } = body;
+    if (!_id) throw new Error('_id is required');
+    const data = await customers.update(_id, body);
+    return NextResponse.json({ success: true, data });
+  } catch (error) {
+    console.error('API Error [customers PUT]:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 400 });
   }
 }
