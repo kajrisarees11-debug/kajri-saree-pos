@@ -304,28 +304,10 @@ export default function POSPage() {
       // collide across terminals or after a clock adjustment.
     };
 
-    try {
-      const res = await fetch('/api/invoices', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(invoicePayload)
-      });
-      const data = await res.json();
-
-      if (data.success) {
-        setCart([]);
-        setCustomer(null);
-        setDiscount(0);
-        setAmountPaid('');
-        setPaymentMethod('Cash');
-        barcodeInputRef.current?.focus();
-        window.open(`/pos/receipt?id=${data.data._id}`, '_blank');
-      } else {
-        alert(`Checkout Failed: ${data.error}`);
-      }
-    } catch (err) {
-      console.error(err);
-
+    // Saves the sale to the local offline queue and resets the cart/UI.
+    // Shared by the "already known offline" path and the "online attempt
+    // failed or timed out" path below, so both end up in the same place.
+    const fallBackToOffline = async () => {
       // A device-unique, collision-resistant invoice number for the offline
       // queue/receipt (the server still assigns the real one once this syncs).
       // eslint-disable-next-line react-hooks/purity -- runs inside an event handler, not render
@@ -339,7 +321,6 @@ export default function POSPage() {
         // would otherwise vanish with no trace anywhere but the console.
         console.error('[POS] CRITICAL: failed to save sale both online and offline:', queueErr);
         alert('CRITICAL: This sale could not be saved online OR offline. Please write down the items and amount manually, then contact support. Do not hand over goods until this is resolved.');
-        setIsCheckingOut(false);
         return;
       }
 
@@ -367,6 +348,51 @@ export default function POSPage() {
       setAmountPaid('');
       setPaymentMethod('Cash');
       barcodeInputRef.current?.focus();
+    };
+
+    try {
+      // Already known to be offline (e.g. the OFFLINE MODE banner is up) —
+      // go straight to the local queue instead of firing a request that can
+      // only time out.
+      if (!isOnline) {
+        await fallBackToOffline();
+        return;
+      }
+
+      // A hard timeout guards against a request that neither succeeds nor
+      // fails outright — a blackholed connection, or Chrome DevTools'
+      // "offline" simulation, stalls fetch() forever instead of rejecting it
+      // the way a real dropped connection usually does, which otherwise left
+      // checkout stuck on "Saving..." with the sale recorded nowhere.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      let res;
+      try {
+        res = await fetch('/api/invoices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(invoicePayload),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      const data = await res.json();
+
+      if (data.success) {
+        setCart([]);
+        setCustomer(null);
+        setDiscount(0);
+        setAmountPaid('');
+        setPaymentMethod('Cash');
+        barcodeInputRef.current?.focus();
+        window.open(`/pos/receipt?id=${data.data._id}`, '_blank');
+      } else {
+        alert(`Checkout Failed: ${data.error}`);
+      }
+    } catch (err) {
+      console.error(err);
+      await fallBackToOffline();
     } finally {
       setIsCheckingOut(false);
     }
