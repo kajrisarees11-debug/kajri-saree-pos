@@ -272,27 +272,6 @@ export default function POSPage() {
       balance: Math.max(0, balance)
     };
 
-    if (!isOnline) {
-      try {
-        await saveOfflineInvoice(invoicePayload);
-        setOfflineSaved(true);
-        await refreshPendingCount();
-        setTimeout(() => setOfflineSaved(false), 4000);
-        setCart([]);
-        setCustomer(null);
-        setDiscount(0);
-        setAmountPaid('');
-        setPaymentMethod('Cash');
-        barcodeInputRef.current?.focus();
-      } catch (err) {
-        console.error('[POS] Failed to save offline invoice:', err);
-        alert('Could not save bill offline. Please try again.');
-      } finally {
-        setIsCheckingOut(false);
-      }
-      return;
-    }
-
     try {
       const res = await fetch('/api/invoices', {
         method: 'POST',
@@ -321,6 +300,10 @@ export default function POSPage() {
       setTimeout(() => setOfflineSaved(false), 4000);
       setCart([]);
       setCustomer(null);
+      setDiscount(0);
+      setAmountPaid('');
+      setPaymentMethod('Cash');
+      barcodeInputRef.current?.focus();
     } finally {
       setIsCheckingOut(false);
     }
@@ -332,33 +315,20 @@ export default function POSPage() {
     if (!newCustomerName || !newCustomerMobile) return;
 
     try {
-      if (isOnline) {
-        const res = await fetch('/api/customers', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: newCustomerName, mobileNumber: newCustomerMobile })
-        });
-        const data = await res.json();
-        if (data.success) {
-          setCustomer(data.data);
-          setIsCustomerModalOpen(false);
-          setNewCustomerName('');
-          setNewCustomerMobile('');
-          loadAndCacheData();
-        } else {
-          alert(`Failed to add customer: ${data.error}`);
-        }
-      } else {
-        const localCust = {
-          _id: `temp_${Date.now()}`,
-          name: newCustomerName,
-          mobileNumber: newCustomerMobile,
-          outstandingBalance: 0
-        };
-        setCustomer(localCust);
+      const res = await fetch('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newCustomerName, mobileNumber: newCustomerMobile })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCustomer(data.data);
         setIsCustomerModalOpen(false);
         setNewCustomerName('');
         setNewCustomerMobile('');
+        loadAndCacheData();
+      } else {
+        alert(`Failed to add customer: ${data.error}`);
       }
     } catch (err) {
       console.error(err);

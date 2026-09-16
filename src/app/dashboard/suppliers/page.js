@@ -15,13 +15,21 @@ export default function SuppliersPage() {
       const res = await fetch('/api/suppliers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newSupplier)
+        body: JSON.stringify({
+          name: newSupplier.name,
+          contactNumber: newSupplier.contactPerson,
+          phone: newSupplier.phone,
+          gstin: newSupplier.gstNumber,
+          address: newSupplier.address,
+        })
       });
       const data = await res.json();
       if (data.success) {
         setIsModalOpen(false);
         setNewSupplier({ name: '', contactPerson: '', phone: '', gstNumber: '', address: '' });
-        fetchSuppliers();
+        refresh('suppliers');
+      } else {
+        alert('Failed: ' + (data.error || 'Unknown error'));
       }
     } catch (err) {
       console.error(err);
@@ -83,11 +91,11 @@ export default function SuppliersPage() {
                 <tr key={sup._id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4">
                     <div className="font-medium text-gray-900">{sup.name}</div>
-                    <div className="text-xs text-gray-500 mt-1">GST: {sup.gstNumber || 'N/A'}</div>
+                    <div className="text-xs text-gray-500 mt-1">GST: {sup.gstin || sup.gstNumber || 'N/A'}</div>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="text-sm text-gray-900">{sup.contactPerson || '-'}</div>
-                    <div className="text-xs text-gray-500">{sup.phone}</div>
+                    <div className="text-sm text-gray-900">{sup.contactNumber || sup.contactPerson || '—'}</div>
+                    <div className="text-xs text-gray-500">{sup.phone || sup.contactNumber || '—'}</div>
                   </td>
                   <td className="px-6 py-4 font-medium text-right text-gray-900">
                     ₹{(sup.purchaseHistory || 0).toLocaleString()}

@@ -16,7 +16,6 @@ export default function ProductsPage() {
 
   const handleAddProduct = async (e) => {
     e.preventDefault();
-    if (!isOnline) { alert('Cannot add products while offline.'); return; }
     try {
       const payload = {
         ...newProduct,
@@ -121,7 +120,7 @@ export default function ProductsPage() {
                       )}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-600">
-                      {product.category}
+                      {product.categoryId || product.category || '—'}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="font-medium text-gray-900">₹{(product.price || 0).toLocaleString()}</div>

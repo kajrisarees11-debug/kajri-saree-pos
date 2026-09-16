@@ -24,6 +24,10 @@ const POSInvoiceSchema = new mongoose.Schema(
     amountPaid: { type: Number, required: true },
     balance: { type: Number, default: 0 }, // For return of change
     status: { type: String, enum: ['Completed', 'Returned', 'Cancelled'], default: 'Completed' },
+    // Return tracking
+    returnReason: { type: String },
+    refundTotal:  { type: Number, default: 0 },
+
   },
   { timestamps: true }
 );

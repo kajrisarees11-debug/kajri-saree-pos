@@ -8,19 +8,25 @@ function POSReceipt() {
   const [loading, setLoading] = useState(true);
   const searchParams = useSearchParams();
 
+  const [settings, setSettings] = useState(null);
+
   useEffect(() => {
-    const fetchInvoice = async () => {
+    const fetchInvoiceAndSettings = async () => {
       const id = searchParams.get('id');
       if (!id) {
         setLoading(false);
         return;
       }
       try {
-        const res = await fetch(`/api/invoices/${id}`);
-        const data = await res.json();
-        if (data.success) {
-          setInvoice(data.data);
-        }
+        const [invRes, setRes] = await Promise.all([
+          fetch(`/api/invoices/${id}`),
+          fetch(`/api/settings`)
+        ]);
+        const invData = await invRes.json();
+        const setData = await setRes.json();
+        
+        if (invData.success) setInvoice(invData.data);
+        if (setData.success) setSettings(setData.data);
       } catch (err) {
         console.error(err);
       } finally {
@@ -28,17 +34,32 @@ function POSReceipt() {
       }
     };
 
-    fetchInvoice();
+    fetchInvoiceAndSettings();
   }, [searchParams]);
 
   useEffect(() => {
     if (invoice && !loading) {
-      const timer = setTimeout(() => {
-        window.print();
+      const timer = setTimeout(async () => {
+        // If Electron is available and autoPrint is true with a selected printer
+        if (typeof window !== 'undefined' && window.kajriElectron && settings?.autoPrint && settings?.printerName) {
+          try {
+            await window.kajriElectron.printPage({
+              silent: true,
+              deviceName: settings.printerName
+            });
+            console.log(`Silently printed to ${settings.printerName}`);
+          } catch (err) {
+            console.error("Silent print failed:", err);
+            window.print(); // fallback
+          }
+        } else {
+          // Standard browser print dialog
+          window.print();
+        }
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [invoice, loading]);
+  }, [invoice, loading, settings]);
 
   if (loading) return <div className="p-10 text-center">Loading receipt...</div>;
   if (!invoice) return <div className="p-10 text-center text-red-500">Invoice not found or no ID provided.</div>;

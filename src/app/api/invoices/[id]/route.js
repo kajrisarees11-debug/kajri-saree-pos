@@ -1,28 +1,46 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/db';
-import POSInvoice from '@/lib/models/POSInvoice';
-import POSCustomer from '@/lib/models/POSCustomer';
-import Product from '@/lib/models/Product';
+import db from '@/lib/sqlite';
 
+export const dynamic = 'force-dynamic';
+
+/**
+ * GET /api/invoices/[id]
+ * Fetch a single invoice by ID with customer and items populated.
+ * Uses local SQLite — 100% offline capable.
+ */
 export async function GET(request, { params }) {
   try {
-    await dbConnect();
-    
-    // We await params inside app router for dynamic segments in next 15 if needed, but it's passed as arg
     const { id } = await params;
 
-    const invoice = await POSInvoice.findById(id)
-      .populate('customerId')
-      .populate('items.productId')
-      .lean();
+    const invoice = db.prepare('SELECT * FROM invoices WHERE _id = ?').get(id);
 
     if (!invoice) {
       return NextResponse.json({ success: false, error: 'Invoice not found' }, { status: 404 });
     }
 
+    // Parse items JSON
+    invoice.items = invoice.items ? JSON.parse(invoice.items) : [];
+
+    // Join customer info
+    if (invoice.customerId) {
+      const customer = db.prepare('SELECT * FROM customers WHERE _id = ?').get(invoice.customerId);
+      invoice.customerId = customer || { _id: invoice.customerId, name: 'Unknown' };
+    }
+
+    // Enrich items with product details
+    invoice.items = invoice.items.map(item => {
+      if (item.productId) {
+        const product = db.prepare('SELECT _id, name, sku, barcode, price FROM products WHERE _id = ?').get(item.productId);
+        if (product) {
+          return { ...item, productId: product };
+        }
+      }
+      return item;
+    });
+
     return NextResponse.json({ success: true, data: invoice });
   } catch (error) {
-    console.error('API Error:', error);
+    console.error('[Invoice GET Error]', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

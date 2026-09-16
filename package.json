@@ -1,15 +1,22 @@
 {
   "name": "kajri-pos",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "Kajri Sarees – Point of Sale & Business Management System",
+  "author": "Kajri Sarees",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "electron:dev": "concurrently -k -n NEXT,ELECTRON -c cyan,magenta \"cross-env NODE_ENV=development next dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron .\"",
+    "electron:build": "npm run build && electron-builder build --win --publish never",
+    "electron:dist": "npm run build && electron-builder build --win"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
+    "better-sqlite3": "^13.0.3",
     "csv-parse": "^7.0.2",
     "framer-motion": "^13.1.0",
     "idb": "^8.0.3",
@@ -22,8 +29,61 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
-    "tailwindcss": "^4"
+    "tailwindcss": "^4",
+    "wait-on": "^9.1.0"
+  },
+  "build": {
+    "appId": "com.kajrisarees.pos",
+    "productName": "Kajri POS",
+    "copyright": "Copyright © 2025 Kajri Sarees",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      ".next/**/*",
+      "public/**/*",
+      "node_modules/**/*",
+      "package.json",
+      "next.config.mjs"
+    ],
+    "asarUnpack": [
+      ".next/**/*",
+      "node_modules/better-sqlite3/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/icons/icon.ico",
+      "artifactName": "Kajri POS Setup ${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Kajri POS",
+      "installerIcon": "electron/icons/icon.ico",
+      "installerHeader": "electron/icons/icon.ico",
+      "license": "LICENSE.txt",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "kajrisarees",
+      "repo": "kajri-pos-releases"
+    }
   }
 }

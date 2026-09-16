@@ -35,7 +35,29 @@ export default function ReportsPage() {
   }, []);
 
   const handleExportCSV = () => {
-    alert("Exporting CSV...");
+    if (!breakdown || breakdown.length === 0) {
+      alert("No data to export");
+      return;
+    }
+    const headers = ["Date", "Invoices Generated", "Total Amount (INR)", "Tax (INR)"];
+    const csvContent = [
+      headers.join(","),
+      ...breakdown.map(row => [
+        row.date,
+        row.invoicesGenerated,
+        row.totalAmount,
+        row.tax
+      ].join(","))
+    ].join("\n");
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `sales_report_${dateRange}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (

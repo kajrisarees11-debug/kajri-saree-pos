@@ -1,56 +1,43 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/db';
-import POSInvoice from '@/lib/models/POSInvoice';
-import Purchase from '@/lib/models/Purchase';
+import db from '@/lib/sqlite';
 
-export async function GET(request) {
+export const dynamic = 'force-dynamic';
+
+export async function GET() {
   try {
-    await dbConnect();
-    
-    // Very simple aggregation for the sake of the report
-    // A robust system would filter by date, but this gets the grand totals
-    const salesAgg = await POSInvoice.aggregate([
-      { $match: { status: { $ne: 'Cancelled' } } },
-      { $group: { 
-          _id: null, 
-          totalSales: { $sum: '$grandTotal' },
-          totalTax: { $sum: '$taxTotal' },
-          count: { $sum: 1 }
-        } 
-      }
-    ]);
+    const salesStats = db.prepare(`
+      SELECT 
+        SUM(grandTotal) as totalSales,
+        SUM(taxTotal) as totalTax,
+        COUNT(*) as count
+      FROM invoices 
+      WHERE status != 'Cancelled'
+    `).get();
 
-    const purchaseAgg = await Purchase.aggregate([
-      { $match: { status: { $ne: 'Cancelled' } } },
-      { $group: { 
-          _id: null, 
-          totalPurchases: { $sum: '$totalAmount' }
-        } 
-      }
-    ]);
+    const purchaseStats = db.prepare(`
+      SELECT SUM(totalAmount) as totalPurchases
+      FROM purchases 
+      WHERE status != 'Cancelled'
+    `).get();
 
-    const totalSales = salesAgg.length > 0 ? salesAgg[0].totalSales : 0;
-    const totalTax = salesAgg.length > 0 ? salesAgg[0].totalTax : 0;
-    const totalPurchases = purchaseAgg.length > 0 ? purchaseAgg[0].totalPurchases : 0;
-    const count = salesAgg.length > 0 ? salesAgg[0].count : 0;
-
-    // Gross profit = Sales - Purchases (simplified)
+    const totalSales = salesStats.totalSales || 0;
+    const totalTax = salesStats.totalTax || 0;
+    const totalPurchases = purchaseStats.totalPurchases || 0;
     const profit = totalSales - totalPurchases;
 
-    // Daily breakdown for the table (just groups by date string)
-    const breakdown = await POSInvoice.aggregate([
-      { $match: { status: { $ne: 'Cancelled' } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          totalAmount: { $sum: '$grandTotal' },
-          tax: { $sum: '$taxTotal' },
-          invoices: { $sum: 1 }
-        }
-      },
-      { $sort: { _id: -1 } },
-      { $limit: 30 }
-    ]);
+    // Daily breakdown for the last 30 days
+    const breakdown = db.prepare(`
+      SELECT 
+        date(createdAt) as dateStr,
+        SUM(grandTotal) as totalAmount,
+        SUM(taxTotal) as tax,
+        COUNT(*) as invoices
+      FROM invoices 
+      WHERE status != 'Cancelled'
+      GROUP BY date(createdAt)
+      ORDER BY date(createdAt) DESC
+      LIMIT 30
+    `).all();
 
     return NextResponse.json({ 
       success: true, 
@@ -62,7 +49,7 @@ export async function GET(request) {
           taxes: totalTax
         },
         breakdown: breakdown.map(b => ({
-          date: b._id,
+          date: b.dateStr,
           invoicesGenerated: b.invoices,
           totalAmount: b.totalAmount,
           tax: b.tax

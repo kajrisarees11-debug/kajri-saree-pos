@@ -6,7 +6,7 @@ import { useData } from '@/context/DataContext';
 export default function ExpensesPage() {
   const { expenses, loading, isOnline, refresh } = useData();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newExpense, setNewExpense] = useState({ title: '', category: 'Utility', amount: '', date: new Date().toISOString().split('T')[0] });
+  const [newExpense, setNewExpense] = useState({ description: '', category: 'Utility', amount: '', paymentMethod: 'Cash', date: new Date().toISOString().split('T')[0] });
 
 
   const handleAddExpense = async (e) => {
@@ -17,14 +17,17 @@ export default function ExpensesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...newExpense,
-          amount: Number(newExpense.amount)
+          amount: Number(newExpense.amount),
+          description: newExpense.description,
         })
       });
       const data = await res.json();
       if (data.success) {
         setIsModalOpen(false);
-        setNewExpense({ title: '', category: 'Utility', amount: '', date: new Date().toISOString().split('T')[0] });
-        fetchExpenses();
+        setNewExpense({ description: '', category: 'Utility', amount: '', paymentMethod: 'Cash', date: new Date().toISOString().split('T')[0] });
+        refresh('expenses');
+      } else {
+        alert('Failed: ' + (data.error || 'Unknown error'));
       }
     } catch (err) {
       console.error(err);
@@ -84,7 +87,7 @@ export default function ExpensesPage() {
             {expenses.map((exp) => (
               <tr key={exp._id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4 text-sm text-gray-900">{new Date(exp.date).toLocaleDateString()}</td>
-                <td className="px-6 py-4 text-sm font-medium text-gray-900">{exp.title}</td>
+                <td className="px-6 py-4 text-sm font-medium text-gray-900">{exp.description || exp.title || '—'}</td>
                 <td className="px-6 py-4">
                   <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
                     {exp.category}
@@ -125,8 +128,8 @@ export default function ExpensesPage() {
                   type="text" 
                   required
                   placeholder="e.g. Electricity Bill"
-                  value={newExpense.title}
-                  onChange={e => setNewExpense({...newExpense, title: e.target.value})}
+                  value={newExpense.description}
+                  onChange={e => setNewExpense({...newExpense, description: e.target.value})}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
                 />
               </div>
@@ -143,6 +146,19 @@ export default function ExpensesPage() {
                   <option value="Marketing">Marketing</option>
                   <option value="Logistics">Logistics</option>
                   <option value="Miscellaneous">Miscellaneous</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Payment Method</label>
+                <select 
+                  value={newExpense.paymentMethod}
+                  onChange={e => setNewExpense({...newExpense, paymentMethod: e.target.value})}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary"
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Cheque">Cheque</option>
                 </select>
               </div>
               <div>

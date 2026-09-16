@@ -32,42 +32,46 @@ export default function SalesHistoryPage() {
   };
 
   const handleProcessReturn = async () => {
-    if (!isOnline) {
-      alert("Returns can only be processed when online. Please reconnect.");
-      return;
-    }
-    // Filter out items with 0 return qty
     const itemsToReturn = Object.entries(returnItems)
-      .map(([itemId, qty]) => ({ itemId, quantity: qty }))
-      .filter(i => i.quantity > 0);
+      .map(([itemIdx, qty]) => ({ itemIdx: parseInt(itemIdx), returnQty: qty }))
+      .filter(i => i.returnQty > 0);
 
     if (itemsToReturn.length === 0) {
-      alert("Please specify quantity for at least one item to return.");
+      alert('Please specify quantity for at least one item to return.');
       return;
     }
 
+    const returnPayload = itemsToReturn.map(({ itemIdx, returnQty }) => {
+      const item = selectedInvoice.items[itemIdx];
+      return {
+        productId: item.productId?._id || item.productId,
+        returnQty,
+        refundAmount: (item.total / item.quantity) * returnQty,
+      };
+    });
+
     try {
-      const res = await fetch('/api/returns', {
+      const res = await fetch(`/api/invoices/${selectedInvoice._id}/return`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          invoiceId: selectedInvoice._id,
-          items: itemsToReturn
+          items: returnPayload,
+          reason: '',
+          refundTotal: returnPayload.reduce((s, i) => s + i.refundAmount, 0),
         })
       });
       const data = await res.json();
-      
       if (data.success) {
-        alert("Return processed successfully. Stock has been updated.");
+        alert('Return processed successfully. Stock has been updated.');
         setReturnModalOpen(false);
         refresh('invoices');
-        refresh('products'); // Refresh products since stock changed
+        refresh('products');
       } else {
-        alert("Failed to process return: " + data.error);
+        alert('Failed to process return: ' + data.error);
       }
     } catch (err) {
       console.error(err);
-      alert("Error processing return");
+      alert('Error processing return');
     }
   };
 
@@ -196,18 +200,18 @@ export default function SalesHistoryPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {selectedInvoice.items.map((item) => (
-                    <tr key={item._id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">{item.productId?.name || 'Unknown'}</td>
+                  {selectedInvoice.items.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium text-gray-900">{item.productId?.name || item.name || 'Unknown'}</td>
                       <td className="px-4 py-3 text-center">{item.quantity}</td>
-                      <td className="px-4 py-3 text-right">₹{item.price}</td>
+                      <td className="px-4 py-3 text-right">₹{(item.price || item.unitPrice || 0).toFixed(2)}</td>
                       <td className="px-4 py-3 text-center">
                         <input 
                           type="number" 
                           min="0" 
                           max={item.quantity} 
-                          value={returnItems[item._id] || ''}
-                          onChange={(e) => handleReturnItemChange(item._id, e.target.value, item.quantity)}
+                          value={returnItems[idx] || ''}
+                          onChange={(e) => handleReturnItemChange(idx, e.target.value, item.quantity)}
                           placeholder="0"
                           className="w-16 p-1.5 border border-gray-300 rounded text-center focus:outline-none focus:ring-2 focus:ring-primary"
                         />

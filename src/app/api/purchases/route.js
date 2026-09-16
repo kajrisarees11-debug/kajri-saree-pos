@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/db';
-import Purchase from '@/lib/models/Purchase';
-import Product from '@/lib/models/Product';
-import Supplier from '@/lib/models/Supplier';
+import db, { generateObjectId, queueSync } from '@/lib/sqlite';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    await dbConnect();
-    const purchases = await Purchase.find().populate('supplierId').sort({ date: -1 });
+    const purchases = db.prepare('SELECT * FROM purchases ORDER BY date DESC').all().map(p => ({
+      ...p,
+      items: p.items ? JSON.parse(p.items) : [],
+      supplierId: p.supplierId ? db.prepare('SELECT * FROM suppliers WHERE _id = ?').get(p.supplierId) : null
+    }));
     return NextResponse.json({ success: true, data: purchases });
   } catch (error) {
     console.error('API Error:', error);
@@ -17,43 +19,67 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    await dbConnect();
     const body = await request.json();
+    const timestamp = new Date().toISOString();
     
-    // Create the purchase record
-    const purchase = await Purchase.create(body);
+    const purchaseId = body._id || generateObjectId();
+    const purchaseData = {
+      _id: purchaseId,
+      supplierId: body.supplierId || null,
+      invoiceNumber: body.invoiceNumber || null,
+      date: body.date || timestamp,
+      items: JSON.stringify(body.items || []),
+      totalAmount: body.totalAmount || 0,
+      status: body.status || 'Completed',
+      notes: body.notes || null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
 
-    // Update Product Inventory
-    const bulkOps = body.items.map(item => ({
-      updateOne: {
-        filter: { _id: item.productId },
-        update: { 
-          $inc: { stock: item.quantity },
-          $set: { purchasePrice: item.purchasePrice } // Update latest purchase price
+    db.transaction(() => {
+      // 1. Create Purchase
+      const cols = Object.keys(purchaseData);
+      const vals = Object.values(purchaseData);
+      db.prepare(`INSERT INTO purchases (${cols.join(', ')}) VALUES (${cols.map(()=>'?').join(', ')})`).run(...vals);
+      queueSync('INSERT', 'purchases', purchaseId, purchaseData);
+
+      // 2. Update Product Inventory & Purchase Price
+      if (body.items && body.items.length > 0) {
+        const updateProd = db.prepare('UPDATE products SET stock = stock + ?, purchasePrice = ?, updatedAt = ? WHERE _id = ?');
+        for (const item of body.items) {
+          updateProd.run(item.quantity, item.purchasePrice, timestamp, item.productId);
+          queueSync('UPDATE', 'products', item.productId, { 
+            $inc: { stock: item.quantity }, 
+            purchasePrice: item.purchasePrice, 
+            updatedAt: timestamp 
+          });
         }
       }
-    }));
 
-    if (bulkOps.length > 0) {
-      await Product.bulkWrite(bulkOps);
-    }
-
-    // Update Supplier Balance (if not fully paid)
-    if (body.paymentStatus !== 'Paid') {
-      const balanceAdded = body.totalAmount - (body.amountPaid || 0);
-      await Supplier.findByIdAndUpdate(body.supplierId, {
-        $inc: { 
-          payableBalance: balanceAdded,
-          purchaseHistory: body.totalAmount 
+      // 3. Update Supplier Balance
+      if (body.supplierId) {
+        let balanceAdded = 0;
+        if (body.status !== 'Paid') {
+          balanceAdded = body.totalAmount - (body.amountPaid || 0);
         }
-      });
-    } else {
-      await Supplier.findByIdAndUpdate(body.supplierId, {
-        $inc: { purchaseHistory: body.totalAmount }
-      });
-    }
+        
+        db.prepare(`
+          UPDATE suppliers 
+          SET payableBalance = payableBalance + ?, 
+              purchaseHistory = purchaseHistory + ?, 
+              updatedAt = ? 
+          WHERE _id = ?
+        `).run(balanceAdded, body.totalAmount, timestamp, body.supplierId);
+        
+        queueSync('UPDATE', 'suppliers', body.supplierId, { 
+          $inc: { payableBalance: balanceAdded, purchaseHistory: body.totalAmount }, 
+          updatedAt: timestamp 
+        });
+      }
+    })();
 
-    return NextResponse.json({ success: true, data: purchase }, { status: 201 });
+    const returnData = { ...purchaseData, items: body.items };
+    return NextResponse.json({ success: true, data: returnData }, { status: 201 });
   } catch (error) {
     console.error('API Error:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 400 });

@@ -1,49 +1,47 @@
 import { NextResponse } from 'next/server';
-import dbConnect from '@/lib/db';
-import Product from '@/lib/models/Product';
-import POSCustomer from '@/lib/models/POSCustomer';
-import POSInvoice from '@/lib/models/POSInvoice';
-import Supplier from '@/lib/models/Supplier';
-import Purchase from '@/lib/models/Purchase';
-import Expense from '@/lib/models/Expense';
-import StoreConfig from '@/lib/models/StoreConfig';
+import db from '@/lib/sqlite';
 
+/**
+ * GET /api/backup
+ * Export full local SQLite database as a downloadable JSON file.
+ * Reads from SQLite — works 100% offline.
+ */
 export async function GET() {
   try {
-    await dbConnect();
-    
-    // Fetch all collections
-    const products = await Product.find({});
-    const customers = await POSCustomer.find({});
-    const invoices = await POSInvoice.find({});
-    const suppliers = await Supplier.find({});
-    const purchases = await Purchase.find({});
-    const expenses = await Expense.find({});
-    const config = await StoreConfig.find({});
-    
+    const products  = db.prepare('SELECT * FROM products').all().map(p => ({ ...p, images: p.images ? JSON.parse(p.images) : [] }));
+    const customers = db.prepare('SELECT * FROM customers').all();
+    const suppliers = db.prepare('SELECT * FROM suppliers').all();
+    const invoices  = db.prepare('SELECT * FROM invoices').all().map(inv => ({ ...inv, items: inv.items ? JSON.parse(inv.items) : [] }));
+    const purchases = db.prepare('SELECT * FROM purchases').all().map(p => ({ ...p, items: p.items ? JSON.parse(p.items) : [] }));
+    const expenses  = db.prepare('SELECT * FROM expenses').all();
+    const ledgers   = db.prepare('SELECT * FROM ledgers').all();
+    const settings  = db.prepare('SELECT * FROM settings').all();
+
     const dump = {
       timestamp: new Date().toISOString(),
+      version: '2.0',
+      source: 'kajri-pos-sqlite',
       data: {
         products,
         customers,
-        invoices,
         suppliers,
+        invoices,
         purchases,
         expenses,
-        config
-      }
+        ledgers,
+        settings,
+      },
     };
-    
-    // Return as a downloadable JSON file
+
     return new NextResponse(JSON.stringify(dump, null, 2), {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Content-Disposition': `attachment; filename="kajri_pos_backup_${new Date().getTime()}.json"`
-      }
+        'Content-Disposition': `attachment; filename="kajri_pos_backup_${new Date().getTime()}.json"`,
+      },
     });
   } catch (error) {
-    console.error('Backup Error:', error);
+    console.error('[Backup Error]', error);
     return NextResponse.json({ success: false, error: 'Failed to generate backup' }, { status: 500 });
   }
 }

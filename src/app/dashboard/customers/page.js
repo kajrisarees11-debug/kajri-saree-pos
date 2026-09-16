@@ -1,10 +1,12 @@
 'use client';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Search, IndianRupee, FileText, Plus, WifiOff } from 'lucide-react';
 import { useData } from '@/context/DataContext';
 
 export default function CustomersPage() {
   const { customers, loading, isOnline, refresh } = useData();
+  const router = useRouter();
   const [search, setSearch] = useState('');
   
   // Modal State
@@ -15,10 +17,6 @@ export default function CustomersPage() {
 
   const handleAddCustomer = async (e) => {
     e.preventDefault();
-    if (!isOnline) {
-      alert('Cannot add customer while offline. Please reconnect.');
-      return;
-    }
     try {
       const res = await fetch('/api/customers', {
         method: 'POST',
@@ -56,7 +54,7 @@ export default function CustomersPage() {
           <h1 className="text-2xl font-bold text-gray-900">Retail Customers (Udhaar)</h1>
           <p className="text-gray-500 text-sm mt-1">Manage POS customers and track credit ledgers.</p>
         </div>
-        <button onClick={() => setIsModalOpen(true)} disabled={!isOnline} className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary-light transition-colors text-sm font-medium disabled:opacity-50">
+        <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg hover:bg-primary-light transition-colors text-sm font-medium">
           <Plus className="w-4 h-4" /> Add Customer
         </button>
       </div>
@@ -128,7 +126,10 @@ export default function CustomersPage() {
                     {customer.lastPurchaseDate ? new Date(customer.lastPurchaseDate).toLocaleDateString() : '-'}
                   </td>
                   <td className="px-6 py-4 text-center">
-                    <button className="text-primary hover:text-primary-light flex items-center justify-center w-full gap-1 text-sm font-medium">
+                    <button
+                      onClick={() => router.push(`/dashboard/reports/party?customerId=${customer._id}`)}
+                      className="text-primary hover:text-primary-light flex items-center justify-center w-full gap-1 text-sm font-medium"
+                    >
                       <FileText className="w-4 h-4" /> Ledger
                     </button>
                   </td>

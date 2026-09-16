@@ -1,0 +1,45 @@
+directories:
+  output: dist
+  buildResources: build
+appId: com.kajrisarees.pos
+productName: Kajri POS
+copyright: Copyright © 2025 Kajri Sarees
+files:
+  - filter:
+      - electron/**/*
+      - .next/**/*
+      - public/**/*
+      - node_modules/**/*
+      - package.json
+      - next.config.mjs
+extraResources:
+  - to: app
+    filter:
+      - .next/**/*
+      - public/**/*
+      - node_modules/**/*
+      - package.json
+      - next.config.mjs
+      - src/**/*
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: electron/icons/icon.jpg
+  artifactName: Kajri POS Setup ${version}.exe
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Kajri POS
+  installerIcon: electron/icons/icon.jpg
+  installerHeader: electron/icons/icon.jpg
+  license: LICENSE.txt
+  deleteAppDataOnUninstall: false
+publish:
+  provider: github
+  owner: kajrisarees
+  repo: kajri-pos-releases
+electronVersion: 44.3.0

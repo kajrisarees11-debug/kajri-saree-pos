@@ -4,6 +4,7 @@ import { Save, Download } from 'lucide-react';
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
+  const [systemPrinters, setSystemPrinters] = useState([]);
   const [formData, setFormData] = useState({
     storeName: 'Kajri Sarees',
     phone: '',
@@ -13,10 +14,25 @@ export default function SettingsPage() {
     invoicePrefix: 'INV-',
     defaultTaxRate: 5,
     terms: '1. Goods once sold will not be taken back or exchanged.\n2. Subject to Surat jurisdiction only.',
-    pageSize: '80mm'
+    pageSize: '80mm',
+    printerName: '',
+    autoPrint: false
   });
 
   useEffect(() => {
+    // Fetch installed printers if in Electron environment
+    const loadPrinters = async () => {
+      if (typeof window !== 'undefined' && window.kajriElectron?.getPrinters) {
+        try {
+          const printers = await window.kajriElectron.getPrinters();
+          setSystemPrinters(printers);
+        } catch (err) {
+          console.error("Failed to load printers:", err);
+        }
+      }
+    };
+    loadPrinters();
+
     const fetchSettings = async () => {
       try {
         const res = await fetch('/api/settings');
@@ -129,17 +145,49 @@ export default function SettingsPage() {
 
         {/* Printer & Backup Settings */}
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4 border-b pb-2">System Configuration</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Default POS Receipt Size</label>
-              <select value={formData.pageSize} onChange={e => setFormData({...formData, pageSize: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none bg-white">
-                <option value="80mm">Thermal 80mm (Standard POS)</option>
-                <option value="58mm">Thermal 58mm (Small POS)</option>
-                <option value="A4">A4 Size (Laser/Inkjet)</option>
-              </select>
+          <h2 className="text-lg font-semibold text-gray-800 mb-4 border-b pb-2">Hardware & System Configuration</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            
+            {/* Printing configuration */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Default POS Receipt Size</label>
+                <select value={formData.pageSize} onChange={e => setFormData({...formData, pageSize: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none bg-white">
+                  <option value="80mm">Thermal 80mm (Standard POS)</option>
+                  <option value="58mm">Thermal 58mm (Small POS)</option>
+                  <option value="A4">A4 Size (Laser/Inkjet)</option>
+                </select>
+              </div>
+              
+              {systemPrinters.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Thermal Printer</label>
+                  <select value={formData.printerName || ''} onChange={e => setFormData({...formData, printerName: e.target.value})} className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none bg-white">
+                    <option value="">-- Select Installed Printer --</option>
+                    {systemPrinters.map(p => (
+                      <option key={p.name} value={p.name}>{p.name} {p.isDefault ? '(Default)' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              
+              <div className="flex items-center gap-3 bg-gray-50 p-3 rounded-lg border border-gray-200">
+                <input 
+                  type="checkbox" 
+                  id="autoPrint"
+                  checked={formData.autoPrint || false}
+                  onChange={e => setFormData({...formData, autoPrint: e.target.checked})}
+                  className="w-5 h-5 text-primary rounded focus:ring-primary accent-primary cursor-pointer"
+                />
+                <label htmlFor="autoPrint" className="text-sm font-medium text-gray-800 cursor-pointer flex-1">
+                  Enable Auto / Silent Printing
+                  <span className="block text-xs text-gray-500 font-normal mt-0.5">Prints receipts directly to the Thermal Printer without showing a popup dialog.</span>
+                </label>
+              </div>
             </div>
-            <div className="flex flex-col border-l border-gray-200 pl-6">
+
+            {/* Backup configuration */}
+            <div className="flex flex-col border-l border-gray-200 pl-8">
               <label className="block text-sm font-medium text-gray-700 mb-2">Data Management</label>
               <a href="/api/backup" download className="flex items-center justify-center gap-2 bg-gray-800 text-white px-4 py-2.5 rounded-lg hover:bg-gray-900 transition-colors text-sm font-medium">
                 <Download className="w-4 h-4" /> Download Database Backup
