@@ -41,8 +41,8 @@ app.on('second-instance', () => {
 // ──────────────────────────────────────────────
 const NEXT_PORT = 3000;
 const NEXT_URL  = `http://localhost:${NEXT_PORT}`;
-const IS_DEV    = process.env.NODE_ENV !== 'production';
-const IS_PROD   = !IS_DEV;
+const IS_PROD   = app.isPackaged;
+const IS_DEV    = !IS_PROD;
 
 let mainWindow = null;
 let nextProcess = null;
