@@ -64,7 +64,20 @@ jobs:
           git tag -f v${{ env.APP_VERSION }}
           git push origin v${{ env.APP_VERSION }} -f
 
+      # GitHub's own asset-upload endpoint occasionally returns a transient
+      # 500 ("Error saving asset") for a large binary like this installer —
+      # infrastructure flakiness on GitHub's end, not anything in this repo's
+      # config. electron-builder itself has no built-in retry for this, so
+      # retry the whole step here instead of requiring a manual re-run each
+      # time it happens. A retry safely re-does the full build (slow, ~20min,
+      # but correct) — the tag/release already exist by then, and
+      # electron-builder overwrites a same-named asset rather than erroring.
       - name: Build and publish Windows installer
-        run: npx electron-builder build --win --publish always --config.extraMetadata.version=${{ env.APP_VERSION }}
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: npx electron-builder build --win --publish always --config.extraMetadata.version=${{ env.APP_VERSION }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
