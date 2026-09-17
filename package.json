@@ -53,10 +53,7 @@
       "package.json",
       "next.config.mjs"
     ],
-    "asarUnpack": [
-      ".next/**/*",
-      "node_modules/better-sqlite3/**/*"
-    ],
+    "asar": false,
     "win": {
       "target": [
         {

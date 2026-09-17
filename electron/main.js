@@ -177,19 +177,20 @@ function startNextServer() {
 
     const { jwtSecret, adminPin } = ensureLocalCredentials();
 
-    // Start `node server.js` (Next.js built server)
-    nextProcess = spawn('node', ['node_modules/.bin/next', 'start', '--port', NEXT_PORT], {
+    // Start Next.js built server using Electron's embedded Node.js
+    nextProcess = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--port', NEXT_PORT], {
       cwd: appDir,
       env: {
         ...process.env,
         NODE_ENV: 'production',
+        ELECTRON_RUN_AS_NODE: '1',
         ELECTRON: 'true',
         PORT: String(NEXT_PORT),
         JWT_SECRET: jwtSecret,
         ADMIN_PIN: adminPin,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
+      shell: false,
       windowsHide: true,
     });
 
