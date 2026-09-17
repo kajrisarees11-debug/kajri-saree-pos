@@ -70,11 +70,13 @@ export default function ProfitLossPage() {
     const discountsGiven = saleInvoices.reduce((s, inv) => s + (inv.discountTotal || 0), 0);
 
     // ── Cost of Goods (from purchases)
-    // Returned purchases are excluded — the goods (and their cost) went back
-    // to the supplier. (Purchase returns don't currently track a partial
-    // refund amount the way invoice returns do, so this is all-or-nothing.)
-    const periodPurchases = purchases.filter(p => inRange(p.createdAt || p.date) && p.status !== 'Returned');
-    const totalPurchases  = periodPurchases.reduce((s, p) => s + (p.totalAmount || 0), 0);
+    // Net each purchase by refundTotal (mirroring how sales returns are
+    // netted above) instead of dropping a Returned purchase's cost
+    // entirely — a ₹50,000 purchase with a single ₹1,000 defective-item
+    // return is marked status='Returned' in full, but ₹49,000 of it is
+    // genuinely-kept inventory cost that was still incurred.
+    const periodPurchases = purchases.filter(p => inRange(p.createdAt || p.date));
+    const totalPurchases  = periodPurchases.reduce((s, p) => s + Math.max(0, (p.totalAmount || 0) - (p.refundTotal || 0)), 0);
 
     // ── Gross Profit
     const grossProfit = netRevenue - totalPurchases;

@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { DataProvider } from '@/context/DataContext';
 import { NetworkStatusProvider } from '@/context/NetworkStatusContext';
 import OfflineBanner from '@/components/OfflineBanner';
+import DataLoadErrorBanner from '@/components/DataLoadErrorBanner';
 import {
   LayoutDashboard, 
   ShoppingCart, 
@@ -200,6 +201,7 @@ export default function DashboardLayout({ children }) {
     <NetworkStatusProvider>
       <OfflineBanner />
       <DataProvider>
+      <DataLoadErrorBanner />
       <div className="flex h-screen bg-gray-50 overflow-hidden">
 
         {/* Mobile backdrop */}

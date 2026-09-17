@@ -12,11 +12,19 @@ async function getRawTotalsCloud() {
   const { default: Purchase } = await import('@/lib/models/Purchase');
   const { default: Expense } = await import('@/lib/models/Expense');
 
-  const [invAgg, arAgg, apAgg, salesAgg, purchAgg, expAgg] = await Promise.all([
+  // Sales/tax are aggregated from 'Completed' invoices only — the same
+  // definition the P&L report uses — with a 'Returned' invoice's actual
+  // refundTotal aggregated separately so it can be subtracted from Cash In
+  // below. Previously this summed grandTotal/taxTotal over 'Completed' AND
+  // 'Returned' invoices with no refund offset anywhere, overstating Sales
+  // Revenue, Tax Payable, and Cash & Bank as if a refunded sale's cash were
+  // still in the till.
+  const [invAgg, arAgg, apAgg, salesAgg, returnsAgg, purchAgg, expAgg] = await Promise.all([
     Product.aggregate([{ $match: { stock: { $gt: 0 } } }, { $group: { _id: null, val: { $sum: { $multiply: ['$stock', '$purchasePrice'] } } } }]),
     POSCustomer.aggregate([{ $group: { _id: null, val: { $sum: '$outstandingBalance' } } }]),
     Supplier.aggregate([{ $group: { _id: null, val: { $sum: '$payableBalance' } } }]),
-    POSInvoice.aggregate([{ $match: { status: { $ne: 'Cancelled' } } }, { $group: { _id: null, sales: { $sum: { $subtract: ['$grandTotal', '$taxTotal'] } }, tax: { $sum: '$taxTotal' } } }]),
+    POSInvoice.aggregate([{ $match: { status: 'Completed' } }, { $group: { _id: null, sales: { $sum: { $subtract: ['$grandTotal', '$taxTotal'] } }, tax: { $sum: '$taxTotal' } } }]),
+    POSInvoice.aggregate([{ $match: { status: 'Returned' } }, { $group: { _id: null, val: { $sum: '$refundTotal' } } }]),
     Purchase.aggregate([{ $match: { status: { $ne: 'Cancelled' } } }, { $group: { _id: null, val: { $sum: '$totalAmount' } } }]),
     Expense.aggregate([{ $group: { _id: null, val: { $sum: '$amount' } } }]),
   ]);
@@ -27,6 +35,7 @@ async function getRawTotalsCloud() {
     accountsPayable: apAgg[0]?.val || 0,
     totalSales: salesAgg[0]?.sales || 0,
     taxPayable: salesAgg[0]?.tax || 0,
+    totalRefunded: returnsAgg[0]?.val || 0,
     totalPurchases: purchAgg[0]?.val || 0,
     totalExpenses: expAgg[0]?.val || 0,
   };
@@ -38,7 +47,9 @@ function getRawTotalsSqlite() {
   const invQuery = db.prepare('SELECT SUM(stock * purchasePrice) as val FROM products WHERE stock > 0').get();
   const arQuery = db.prepare('SELECT SUM(outstandingBalance) as val FROM customers').get();
   const apQuery = db.prepare('SELECT SUM(payableBalance) as val FROM suppliers').get();
-  const salesQuery = db.prepare('SELECT SUM(grandTotal - taxTotal) as sales, SUM(taxTotal) as tax FROM invoices WHERE status != \'Cancelled\'').get();
+  // See the matching comment in getRawTotalsCloud() above.
+  const salesQuery = db.prepare('SELECT SUM(grandTotal - taxTotal) as sales, SUM(taxTotal) as tax FROM invoices WHERE status = \'Completed\'').get();
+  const returnsQuery = db.prepare('SELECT SUM(refundTotal) as val FROM invoices WHERE status = \'Returned\'').get();
   const purchQuery = db.prepare('SELECT SUM(totalAmount) as val FROM purchases WHERE status != \'Cancelled\'').get();
   const expQuery = db.prepare('SELECT SUM(amount) as val FROM expenses').get();
 
@@ -48,6 +59,7 @@ function getRawTotalsSqlite() {
     accountsPayable: apQuery.val || 0,
     totalSales: salesQuery.sales || 0,
     taxPayable: salesQuery.tax || 0,
+    totalRefunded: returnsQuery.val || 0,
     totalPurchases: purchQuery.val || 0,
     totalExpenses: expQuery.val || 0,
   };
@@ -63,11 +75,14 @@ export async function GET() {
       totals = getRawTotalsSqlite();
     }
 
-    const { inventory, accountsReceivable, accountsPayable, totalSales, taxPayable, totalPurchases, totalExpenses } = totals;
+    const { inventory, accountsReceivable, accountsPayable, totalSales, taxPayable, totalRefunded, totalPurchases, totalExpenses } = totals;
     const grossSales = totalSales + taxPayable;
 
-    // Cash In = Gross Sales - Uncollected Accounts Receivable
-    const cashIn = grossSales - accountsReceivable;
+    // Cash In = Gross Sales - Uncollected Accounts Receivable - Refunds Paid Out
+    // Without subtracting totalRefunded, a fully-cash-refunded sale looked
+    // as if the cash were still in the till, since the cash actually paid
+    // back to the customer on a return was never accounted for anywhere.
+    const cashIn = grossSales - accountsReceivable - totalRefunded;
     // Cash Out = (Purchases - Unpaid Accounts Payable) + Expenses
     const cashOut = (totalPurchases - accountsPayable) + totalExpenses;
     const cashAndBank = cashIn - cashOut;

@@ -44,3 +44,9 @@ next-env.d.ts
 # Desktop App & Databases
 *.exe
 /.data/
+
+# electron-builder output (win-unpacked/, installer, and its own debug
+# config dump) — a full local build with asar disabled unpacks the ENTIRE
+# app (all of node_modules, full src/) as plain files here; never intended
+# to be committed.
+/dist/

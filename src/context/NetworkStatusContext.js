@@ -24,6 +24,8 @@ export function NetworkStatusProvider({ children }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncResult, setLastSyncResult] = useState(null);
   const syncTimeoutRef = useRef(null);
+  const isOnlineRef = useRef(true);
+  useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
 
   // Refresh the pending count
   const refreshPendingCount = useCallback(async () => {
@@ -85,9 +87,16 @@ export function NetworkStatusProvider({ children }) {
 
     // Chromium's 'online'/'offline' events don't always fire reliably inside
     // an Electron BrowserWindow. Poll navigator.onLine as a fallback so a
-    // missed event doesn't leave the banner permanently wrong.
+    // missed event doesn't leave the banner permanently wrong — and, since a
+    // missed 'online' event also means the normal reconnect-sync path never
+    // ran, route a detected transition through the SAME handlers as the real
+    // events (not just correcting the displayed status) so any offline-queued
+    // invoices don't sit un-synced until something else happens to trigger it.
     const pollId = setInterval(() => {
-      setIsOnline((prev) => (prev !== navigator.onLine ? navigator.onLine : prev));
+      const nowOnline = navigator.onLine;
+      if (isOnlineRef.current !== nowOnline) {
+        if (nowOnline) handleOnline(); else handleOffline();
+      }
     }, 10000);
 
     return () => {

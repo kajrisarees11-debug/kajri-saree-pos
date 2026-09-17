@@ -179,6 +179,7 @@ function initializeSchemas() {
       items TEXT NOT NULL, -- JSON array
       totalAmount REAL DEFAULT 0,
       status TEXT DEFAULT 'Completed',
+      refundTotal REAL DEFAULT 0,
       notes TEXT,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -270,6 +271,7 @@ function migrateSchema() {
     () => { if (!hasColumn('settings', 'mongoSyncUri')) db.exec('ALTER TABLE settings ADD COLUMN mongoSyncUri TEXT'); },
     () => { if (!hasColumn('products', 'taxRate')) db.exec('ALTER TABLE products ADD COLUMN taxRate REAL DEFAULT 0'); },
     () => { if (!hasColumn('settings', 'deviceId')) db.exec('ALTER TABLE settings ADD COLUMN deviceId TEXT'); },
+    () => { if (!hasColumn('purchases', 'refundTotal')) db.exec('ALTER TABLE purchases ADD COLUMN refundTotal REAL DEFAULT 0'); },
     // Partial unique indexes — safe to (re)create on every boot; only ever
     // reject an insert going forward, never destructive to existing rows.
     () => db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_idempotency ON invoices(idempotencyKey) WHERE idempotencyKey IS NOT NULL`),

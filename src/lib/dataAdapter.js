@@ -30,7 +30,7 @@ const ALLOWED_UPDATE_FIELDS = {
   customers: ['name', 'mobileNumber', 'email', 'address', 'city', 'pincode', 'outstandingBalance', 'totalPurchases', 'gstin', 'customerType', 'updatedAt'],
   suppliers: ['name', 'contactNumber', 'phone', 'email', 'address', 'city', 'gstin', 'payableBalance', 'outstandingBalance', 'purchaseHistory', 'bankName', 'accountNumber', 'ifscCode', 'upiId', 'notes', 'updatedAt'],
   invoices: ['invoiceNumber', 'customerId', 'items', 'subTotal', 'taxTotal', 'discountTotal', 'grandTotal', 'paymentMethod', 'amountPaid', 'balance', 'status', 'returnReason', 'refundTotal', 'updatedAt'],
-  purchases: ['supplierId', 'invoiceNumber', 'date', 'items', 'totalAmount', 'status', 'notes', 'updatedAt'],
+  purchases: ['supplierId', 'invoiceNumber', 'date', 'items', 'totalAmount', 'status', 'refundTotal', 'notes', 'updatedAt'],
   settings: ['storeName', 'phone', 'address', 'email', 'gstin', 'invoicePrefix', 'defaultTaxRate', 'terms', 'pageSize', 'printerName', 'autoPrint', 'mongoSyncUri', 'updatedAt'],
 };
 

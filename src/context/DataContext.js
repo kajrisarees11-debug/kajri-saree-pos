@@ -36,6 +36,13 @@ export function DataProvider({ children }) {
   const [cashTransactions, setCashTransactions] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [lastSynced, setLastSynced] = useState(null);
+  // Names of any collection that failed to load on the most recent
+  // loadAllData() run. Without this, every consumer just rendered its
+  // empty-state UI on a failed fetch — visually indistinguishable from a
+  // store that genuinely has no data yet, e.g. every product/customer
+  // gone, or a P&L report showing all zeros, with nothing telling the
+  // owner it's actually a load failure.
+  const [loadErrors, setLoadErrors] = useState([]);
 
   const loadAllData = useCallback(async () => {
     setLoading(true);
@@ -60,21 +67,22 @@ export function DataProvider({ children }) {
       fetches.map(([, url]) => fetch(url).then(r => r.json()))
     );
 
-    let anyFailed = false;
+    const failed = [];
     results.forEach((result, i) => {
       const [name, , setter] = fetches[i];
       if (result.status === 'fulfilled' && result.value.success) {
         setter(result.value.data);
       } else {
-        anyFailed = true;
+        failed.push(name);
         const reason = result.status === 'rejected' ? result.reason : result.value.error;
         console.error(`[DataContext] Failed to load ${name}:`, reason);
       }
     });
 
-    if (!anyFailed) {
+    if (failed.length === 0) {
       console.log('[DataContext] ⚡ Loaded data from local SQLite database.');
     }
+    setLoadErrors(failed);
     setLastSynced(new Date());
     setLoading(false);
   }, []);
@@ -155,7 +163,7 @@ export function DataProvider({ children }) {
     <DataContext.Provider value={{
       products, customers, suppliers, expenses, purchases, invoices,
       bankAccounts, bankTransactions, cashTransactions,
-      loading, lastSynced, isOnline,
+      loading, lastSynced, isOnline, loadErrors,
       refresh,
       reload: loadAllData,
     }}>

@@ -75,8 +75,8 @@ export default function SalesHistoryPage() {
     }
   };
 
-  const filteredInvoices = invoices.filter(inv => 
-    inv.invoiceNumber.toLowerCase().includes(search.toLowerCase()) || 
+  const filteredInvoices = invoices.filter(inv =>
+    (inv.invoiceNumber || '').toLowerCase().includes(search.toLowerCase()) ||
     (inv.customerId?.name || '').toLowerCase().includes(search.toLowerCase())
   );
 

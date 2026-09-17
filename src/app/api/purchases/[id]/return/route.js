@@ -108,7 +108,7 @@ export async function POST(request, { params }) {
 
           await Purchase.findByIdAndUpdate(
             id,
-            { status: 'Returned', notes: reason || null, updatedAt: timestamp },
+            { status: 'Returned', refundTotal: refundTotal || 0, notes: reason || null, updatedAt: timestamp },
             { session }
           );
         });
@@ -180,9 +180,9 @@ export async function POST(request, { params }) {
       }
 
       // 3. Mark purchase as Returned
-      db.prepare('UPDATE purchases SET status = ?, notes = ?, updatedAt = ? WHERE _id = ?')
-        .run('Returned', reason || null, timestamp, id);
-      queueSync('UPDATE', 'purchases', id, { status: 'Returned', notes: reason || null, updatedAt: timestamp });
+      db.prepare('UPDATE purchases SET status = ?, refundTotal = ?, notes = ?, updatedAt = ? WHERE _id = ?')
+        .run('Returned', refundTotal || 0, reason || null, timestamp, id);
+      queueSync('UPDATE', 'purchases', id, { status: 'Returned', refundTotal: refundTotal || 0, notes: reason || null, updatedAt: timestamp });
     })();
 
     const updated = db.prepare('SELECT * FROM purchases WHERE _id = ?').get(id);

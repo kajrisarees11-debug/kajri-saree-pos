@@ -21,6 +21,12 @@ const PurchaseSchema = new mongoose.Schema(
     // Completion/return status — mirrors the SQLite `purchases.status` column.
     // Distinct from paymentStatus above (which tracks whether it's been paid).
     status: { type: String, default: 'Completed' },
+    // How much of totalAmount was actually refunded on return — a purchase
+    // with even a single-item partial return is marked status='Returned' in
+    // full, so this (mirroring POSInvoice.refundTotal) is what lets reports
+    // net out only the genuinely-returned portion instead of excluding the
+    // whole purchase's cost from COGS.
+    refundTotal: { type: Number, default: 0 },
     notes: { type: String },
   },
   { timestamps: true }

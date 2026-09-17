@@ -34,6 +34,8 @@ on:
       - "package.json"
       - "package-lock.json"
       - "next.config.mjs"
+      - "postcss.config.mjs"
+      - "jsconfig.json"
       - ".github/workflows/build-release.yml"
   workflow_dispatch: {}
 
