@@ -15,6 +15,15 @@ name: Build & Publish Windows App
 # would look identical to the updater and it would never offer an update.
 # (Uses the long --config flag rather than the -c alias — on the CI
 # runner, npx's own -c/--call flag collided with it.)
+#
+# The version tag (vX.Y.Z) is created and pushed BEFORE calling
+# electron-builder — GitHub's API rejects creating a published (non-draft)
+# release for a tag that doesn't exist yet ("Published releases must have
+# a valid tag"); it only auto-creates the tag for draft releases. Creating
+# the tag ourselves first sidesteps that.
+env:
+  APP_VERSION: 1.0.${{ github.run_number }}
+
 on:
   push:
     branches: [main]
@@ -48,7 +57,12 @@ jobs:
       - name: Build Next.js app
         run: npm run build
 
+      - name: Create release tag
+        run: |
+          git tag -f v${{ env.APP_VERSION }}
+          git push origin v${{ env.APP_VERSION }} -f
+
       - name: Build and publish Windows installer
-        run: npx electron-builder build --win --publish always --config.extraMetadata.version=1.0.${{ github.run_number }}
+        run: npx electron-builder build --win --publish always --config.extraMetadata.version=${{ env.APP_VERSION }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
