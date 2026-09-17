@@ -272,7 +272,7 @@ export default function DashboardLayout({ children }) {
             </div>
             <div className="flex items-center gap-3">
               <Link 
-                href="https://github.com/kajrisarees11-debug/kajri-saree-pos/releases/latest/download/Kajri.POS.Setup.1.0.0.exe"
+                href="https://github.com/kajrisarees11-debug/kajri-saree-pos/releases/latest/download/Kajri.POS.Setup.exe"
                 className="hidden sm:flex items-center gap-1.5 bg-gradient-to-r from-gray-800 to-black text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:shadow-md hover:-translate-y-0.5 transition-all"
               >
                 <Download className="w-3.5 h-3.5" />

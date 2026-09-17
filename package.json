@@ -64,7 +64,7 @@
         }
       ],
       "icon": "electron/icons/icon.ico",
-      "artifactName": "Kajri POS Setup ${version}.exe"
+      "artifactName": "Kajri.POS.Setup.exe"
     },
     "nsis": {
       "oneClick": false,
@@ -79,8 +79,9 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "kajrisarees",
-      "repo": "kajri-pos-releases"
+      "owner": "kajrisarees11-debug",
+      "repo": "kajri-saree-pos",
+      "releaseType": "release"
     }
   }
 }
