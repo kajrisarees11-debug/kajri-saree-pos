@@ -7,12 +7,13 @@
  * as a Windows desktop application.
  */
 
-const { app, BrowserWindow, ipcMain, Menu, shell, dialog, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, dialog, nativeTheme, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 const http = require('http');
+const { autoUpdater } = require('electron-updater');
 
 // ──────────────────────────────────────────────
 // Single instance lock
@@ -286,6 +287,46 @@ function createWindow() {
 }
 
 // ──────────────────────────────────────────────
+// Auto-update
+//
+// Checks GitHub Releases (via the "publish" config in package.json, baked
+// into the packaged app as app-update.yml at build time — nothing to
+// configure here) once per launch. Downloads any newer version quietly in
+// the background and only installs it the next time the app is closed and
+// reopened, or when the cashier clicks the notification — never a surprise
+// restart in the middle of a sale.
+// ──────────────────────────────────────────────
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('error', (err) => {
+    console.error('[AutoUpdate] Error checking/downloading update:', err.message);
+  });
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[AutoUpdate] Update available: v${info.version} — downloading in the background.`);
+  });
+  autoUpdater.on('update-not-available', () => {
+    console.log('[AutoUpdate] Already on the latest version.');
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[AutoUpdate] v${info.version} downloaded — will install on next restart.`);
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: 'Kajri POS Update Ready',
+        body: `Version ${info.version} has been downloaded. Restart Kajri POS to install it — or it'll install automatically next time you close the app.`,
+      });
+      notification.on('click', () => autoUpdater.quitAndInstall());
+      notification.show();
+    }
+  });
+
+  autoUpdater.checkForUpdates().catch((err) => {
+    console.error('[AutoUpdate] checkForUpdates failed:', err.message);
+  });
+}
+
+// ──────────────────────────────────────────────
 // Application lifecycle
 // ──────────────────────────────────────────────
 app.whenReady().then(async () => {
@@ -302,6 +343,9 @@ app.whenReady().then(async () => {
     if (IS_PROD) await waitForNextServer(NEXT_URL);
     closeSplash();
     createWindow();
+    // Only meaningful for a real packaged install — there's no published
+    // build to compare against when running from source in dev mode.
+    if (IS_PROD) setupAutoUpdater();
   } catch (err) {
     closeSplash();
     dialog.showErrorBox(

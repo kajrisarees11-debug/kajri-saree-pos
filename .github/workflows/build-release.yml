@@ -1,11 +1,18 @@
 name: Build & Publish Windows App
 
 # Builds the Electron desktop app on every push to main that touches
-# desktop-relevant files, and publishes the installer to this repo's GitHub
-# Release — overwriting the existing "Kajri.POS.Setup.exe" asset in place so
-# the site's "Download for Windows" link (which points at that fixed
-# filename via /releases/latest/download/) always serves the newest build
-# without anyone needing to edit a link or upload a file by hand.
+# desktop-relevant files, and publishes the installer to a fresh GitHub
+# Release each time. The installer filename itself never changes
+# ("Kajri.POS.Setup.exe"), so the site's "Download for Windows" link (which
+# points at that fixed filename via /releases/latest/download/) always
+# serves the newest build without anyone needing to edit a link by hand.
+#
+# Each build gets a genuinely unique, increasing version
+# (1.0.<run number>) via -c.extraMetadata.version below, without touching
+# the checked-in package.json version — this is what lets the in-app
+# auto-updater (electron-updater) actually detect that a newer build
+# exists. Without a real version bump per release, every install would look
+# identical to the updater and it would never offer an update.
 on:
   push:
     branches: [main]
@@ -26,9 +33,9 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -40,6 +47,6 @@ jobs:
         run: npm run build
 
       - name: Build and publish Windows installer
-        run: npx electron-builder build --win --publish always
+        run: npx electron-builder build --win --publish always -c.extraMetadata.version=1.0.${{ github.run_number }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
