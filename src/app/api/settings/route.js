@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
-import { settings } from '@/lib/dataAdapter';
+import { settings, IS_CLOUD } from '@/lib/dataAdapter';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
     const data = await settings.get();
-    return NextResponse.json({ success: true, data });
+    // isCloud is synthesized here, not stored — it tells the Settings page
+    // whether to show the desktop-only "Cloud Sync" section.
+    return NextResponse.json({ success: true, data: { ...data, isCloud: IS_CLOUD } });
   } catch (error) {
     console.error('API Error [settings GET]:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });

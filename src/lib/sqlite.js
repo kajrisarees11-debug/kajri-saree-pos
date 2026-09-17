@@ -241,6 +241,7 @@ function initializeSchemas() {
       pageSize TEXT,
       printerName TEXT,
       autoPrint INTEGER DEFAULT 0, -- 0 for false, 1 for true
+      mongoSyncUri TEXT, -- this device's MongoDB connection string for cloud sync; never leaves this machine
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -264,6 +265,7 @@ function migrateSchema() {
   const steps = [
     () => { if (!hasColumn('invoices', 'idempotencyKey')) db.exec('ALTER TABLE invoices ADD COLUMN idempotencyKey TEXT'); },
     () => { if (!hasColumn('purchases', 'amountPaid')) db.exec('ALTER TABLE purchases ADD COLUMN amountPaid REAL DEFAULT 0'); },
+    () => { if (!hasColumn('settings', 'mongoSyncUri')) db.exec('ALTER TABLE settings ADD COLUMN mongoSyncUri TEXT'); },
     // Partial unique indexes — safe to (re)create on every boot; only ever
     // reject an insert going forward, never destructive to existing rows.
     () => db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_idempotency ON invoices(idempotencyKey) WHERE idempotencyKey IS NOT NULL`),

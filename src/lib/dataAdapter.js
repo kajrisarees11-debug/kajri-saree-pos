@@ -31,7 +31,7 @@ const ALLOWED_UPDATE_FIELDS = {
   suppliers: ['name', 'contactNumber', 'phone', 'email', 'address', 'city', 'gstin', 'payableBalance', 'outstandingBalance', 'purchaseHistory', 'bankName', 'accountNumber', 'ifscCode', 'upiId', 'notes', 'updatedAt'],
   invoices: ['invoiceNumber', 'customerId', 'items', 'subTotal', 'taxTotal', 'discountTotal', 'grandTotal', 'paymentMethod', 'amountPaid', 'balance', 'status', 'returnReason', 'refundTotal', 'updatedAt'],
   purchases: ['supplierId', 'invoiceNumber', 'date', 'items', 'totalAmount', 'status', 'notes', 'updatedAt'],
-  settings: ['storeName', 'phone', 'address', 'email', 'gstin', 'invoicePrefix', 'defaultTaxRate', 'terms', 'pageSize', 'printerName', 'autoPrint', 'updatedAt'],
+  settings: ['storeName', 'phone', 'address', 'email', 'gstin', 'invoicePrefix', 'defaultTaxRate', 'terms', 'pageSize', 'printerName', 'autoPrint', 'mongoSyncUri', 'updatedAt'],
 };
 
 // Escapes regex metacharacters in user-supplied search text before it's used

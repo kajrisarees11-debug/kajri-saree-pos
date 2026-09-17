@@ -1,10 +1,11 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { Save, Download } from 'lucide-react';
+import { Save, Download, Cloud, Eye, EyeOff } from 'lucide-react';
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [systemPrinters, setSystemPrinters] = useState([]);
+  const [showMongoUri, setShowMongoUri] = useState(false);
   // Real settings haven't loaded yet — the form is still just showing
   // hardcoded placeholders. Saving now would overwrite whatever the real,
   // already-saved settings are with those placeholders, so Save stays
@@ -22,7 +23,12 @@ export default function SettingsPage() {
     terms: '1. Goods once sold will not be taken back or exchanged.\n2. Subject to Surat jurisdiction only.',
     pageSize: '80mm',
     printerName: '',
-    autoPrint: false
+    autoPrint: false,
+    mongoSyncUri: '',
+    // Defaults to hidden until a real settings load confirms this is the
+    // desktop/SQLite build — the field is meaningless on the cloud deployment,
+    // which already has its own MONGODB_URI env var.
+    isCloud: true,
   });
 
   const fetchSettings = async () => {
@@ -220,6 +226,37 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* Cloud Sync — desktop app only; the web version already has its own MongoDB connection */}
+        {!formData.isCloud && (
+          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+            <h2 className="text-lg font-semibold text-gray-800 mb-1 border-b pb-2 flex items-center gap-2">
+              <Cloud className="w-5 h-5 text-primary" /> Cloud Sync
+            </h2>
+            <p className="text-sm text-gray-500 mt-3 mb-3">
+              Paste your business&apos;s MongoDB connection string here to let this device sync sales, products, and customers with your online store. This value is stored only on this computer and is never bundled into the app or shared with any other device.
+            </p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">MongoDB Connection String</label>
+            <div className="relative max-w-xl">
+              <input
+                type={showMongoUri ? 'text' : 'password'}
+                value={formData.mongoSyncUri || ''}
+                onChange={e => setFormData({ ...formData, mongoSyncUri: e.target.value })}
+                placeholder="mongodb://user:password@host:port/database"
+                className="w-full p-2.5 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none font-mono text-sm"
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                onClick={() => setShowMongoUri(v => !v)}
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-400 hover:text-gray-600"
+                aria-label={showMongoUri ? 'Hide connection string' : 'Show connection string'}
+              >
+                {showMongoUri ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        )}
 
       </form>
     </div>
