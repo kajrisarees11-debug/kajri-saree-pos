@@ -5,6 +5,9 @@
   "author": "Kajri Sarees",
   "private": true,
   "main": "electron/main.js",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -24,7 +27,7 @@
     "jose": "^6.2.9",
     "lucide-react": "^1.31.0",
     "mongoose": "^9.9.2",
-    "next": "16.3.1",
+    "next": "16.3.5",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -32,10 +35,13 @@
     "@tailwindcss/postcss": "^4",
     "concurrently": "^10.0.5",
     "cross-env": "^10.1.0",
+    "dotenv": "16.6.1",
     "electron": "^44.3.0",
     "electron-builder": "^26.15.3",
     "eslint": "^9",
-    "eslint-config-next": "16.3.1",
+    "eslint-config-next": "16.3.5",
+    "png-to-ico": "3.0.2",
+    "sharp": "0.35.4",
     "tailwindcss": "^4",
     "wait-on": "^9.1.0"
   },

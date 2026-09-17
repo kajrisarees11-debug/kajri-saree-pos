@@ -39,7 +39,11 @@ function validateReturnAgainstPurchase(purchase, items, refundTotal) {
 export async function POST(request, { params }) {
   try {
     const { id } = await params;
-    const { items, reason, refundTotal, supplierId } = await request.json();
+    // supplierId is intentionally NOT read from the request body — it must
+    // always be the purchase's own stored supplier, never client-supplied,
+    // or a stale/tampered value could credit an unrelated supplier's payable
+    // balance and ledger for a purchase that was never theirs.
+    const { items, reason, refundTotal } = await request.json();
     const timestamp = new Date().toISOString();
 
     if (IS_CLOUD) {
@@ -62,7 +66,7 @@ export async function POST(request, { params }) {
         return NextResponse.json({ success: false, error: validationError }, { status: 400 });
       }
 
-      const sid = supplierId || purchase.supplierId;
+      const sid = purchase.supplierId;
 
       const session = await mongoose.startSession();
       try {
@@ -147,7 +151,7 @@ export async function POST(request, { params }) {
       }
 
       // 2. Reduce supplier payable balance (debit note reduces what we owe them)
-      const sid = supplierId || purchase.supplierId;
+      const sid = purchase.supplierId;
       if (sid && refundTotal > 0) {
         db.prepare('UPDATE suppliers SET payableBalance = MAX(0, payableBalance - ?), outstandingBalance = MAX(0, outstandingBalance - ?), updatedAt = ? WHERE _id = ?')
           .run(refundTotal, refundTotal, timestamp, sid);

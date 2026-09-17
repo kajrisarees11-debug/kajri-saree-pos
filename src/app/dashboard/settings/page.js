@@ -12,6 +12,13 @@ export default function SettingsPage() {
   // disabled (and a banner shown) until a load actually succeeds.
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [loadError, setLoadError] = useState(null);
+  // The MongoDB URI itself is never sent back by GET /api/settings (it's a
+  // credential — see the route). We only learn whether one is already set,
+  // and only submit a new mongoSyncUri value if the operator actually types
+  // one — otherwise every unrelated settings save (e.g. just changing the
+  // store address) would silently overwrite the real stored URI with ''.
+  const [mongoSyncUriConfigured, setMongoSyncUriConfigured] = useState(false);
+  const [mongoSyncUriTouched, setMongoSyncUriTouched] = useState(false);
   const [formData, setFormData] = useState({
     storeName: 'Kajri Sarees',
     phone: '',
@@ -38,6 +45,7 @@ export default function SettingsPage() {
       const data = await res.json();
       if (data.success && data.data) {
         setFormData(prev => ({ ...prev, ...data.data }));
+        setMongoSyncUriConfigured(!!data.data.mongoSyncUriConfigured);
         setSettingsLoaded(true);
       } else {
         setLoadError(data.error || 'Server returned an unsuccessful response.');
@@ -73,10 +81,17 @@ export default function SettingsPage() {
     }
     setLoading(true);
     try {
+      // Only include mongoSyncUri in the payload if the operator actually
+      // typed a new value — otherwise this save (even one only touching,
+      // say, the store address) would blank out the real stored URI, since
+      // formData.mongoSyncUri is never populated by the load in the first
+      // place (GET /api/settings deliberately never returns it).
+      const { mongoSyncUri, ...rest } = formData;
+      const payload = mongoSyncUriTouched ? formData : rest;
       const res = await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.success) {
@@ -118,7 +133,12 @@ export default function SettingsPage() {
       )}
 
       <form className="space-y-6" onSubmit={handleSubmit}>
-        
+        {/* Locks every field until the real saved settings have loaded — before
+            this, the form is only showing hardcoded placeholders, and typing
+            into it would be silently discarded (or worse, saved over the real
+            values) once the load actually resolves. */}
+        <fieldset disabled={!settingsLoaded} className="space-y-6 disabled:opacity-60">
+
         {/* Store Details */}
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
           <h2 className="text-lg font-semibold text-gray-800 mb-4 border-b pb-2">Store Details</h2>
@@ -236,13 +256,18 @@ export default function SettingsPage() {
             <p className="text-sm text-gray-500 mt-3 mb-3">
               Paste your business&apos;s MongoDB connection string here to let this device sync sales, products, and customers with your online store. This value is stored only on this computer and is never bundled into the app or shared with any other device.
             </p>
-            <label className="block text-sm font-medium text-gray-700 mb-1">MongoDB Connection String</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              MongoDB Connection String
+              {mongoSyncUriConfigured && !mongoSyncUriTouched && (
+                <span className="ml-2 text-xs font-normal text-green-600">already configured on this device</span>
+              )}
+            </label>
             <div className="relative max-w-xl">
               <input
                 type={showMongoUri ? 'text' : 'password'}
                 value={formData.mongoSyncUri || ''}
-                onChange={e => setFormData({ ...formData, mongoSyncUri: e.target.value })}
-                placeholder="mongodb://user:password@host:port/database"
+                onChange={e => { setMongoSyncUriTouched(true); setFormData({ ...formData, mongoSyncUri: e.target.value }); }}
+                placeholder={mongoSyncUriConfigured ? 'Already set — leave blank to keep it, or type a new value to replace it' : 'mongodb://user:password@host:port/database'}
                 className="w-full p-2.5 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none font-mono text-sm"
                 autoComplete="off"
               />
@@ -258,6 +283,7 @@ export default function SettingsPage() {
           </div>
         )}
 
+        </fieldset>
       </form>
     </div>
   );

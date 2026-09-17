@@ -129,15 +129,45 @@ function waitForNextServer(url, retries = 60, interval = 1000) {
 function ensureLocalCredentials() {
   const credsPath = path.join(app.getPath('userData'), 'auth-credentials.json');
 
+  // Distinguishes "no file at all" (genuine first run) from "file exists but
+  // failed to read/parse" (corruption — e.g. a crash/power-loss mid-write on
+  // a retail PC that's frequently power-cycled uncleanly). Silently treating
+  // the latter as first-run used to mint a brand-new random PIN with no
+  // warning, locking the owner out of their own POS if the one-time "new
+  // PIN" dialog was missed.
+  const fileExisted = fs.existsSync(credsPath);
   let creds = null;
-  try {
-    creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
-  } catch {
-    creds = null;
+  let corrupted = false;
+  if (fileExisted) {
+    try {
+      creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+      if (!creds || !creds.jwtSecret || !creds.adminPin) {
+        corrupted = true;
+        creds = null;
+      }
+    } catch {
+      corrupted = true;
+      creds = null;
+    }
   }
 
-  if (creds && creds.jwtSecret && creds.adminPin) {
+  if (creds) {
     return creds;
+  }
+
+  if (corrupted) {
+    const response = dialog.showMessageBoxSync({
+      type: 'warning',
+      title: 'Kajri POS — Credentials File Unreadable',
+      message: `Kajri POS could not read its saved login credentials at:\n\n${credsPath}\n\nThis usually means the file was corrupted (e.g. by an unclean shutdown). Your existing PIN cannot be recovered.\n\nGenerate a brand-new login PIN now? (Choosing Cancel will quit the app so you can investigate the file yourself.)`,
+      buttons: ['Generate New PIN', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response !== 0) {
+      app.quit();
+      process.exit(0);
+    }
   }
 
   creds = {
@@ -147,7 +177,12 @@ function ensureLocalCredentials() {
 
   try {
     fs.mkdirSync(path.dirname(credsPath), { recursive: true });
-    fs.writeFileSync(credsPath, JSON.stringify(creds, null, 2), { mode: 0o600 });
+    // Write atomically (temp file + rename) so a crash mid-write can never
+    // leave a truncated/corrupt credentials file behind — the exact failure
+    // mode this whole distinction exists to guard against.
+    const tmpPath = `${credsPath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(creds, null, 2), { mode: 0o600 });
+    fs.renameSync(tmpPath, credsPath);
   } catch (err) {
     console.error('[Kajri POS] Failed to persist auth credentials:', err);
   }
@@ -171,7 +206,17 @@ function startNextServer() {
     return Promise.resolve();
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolveOuter, rejectOuter) => {
+    // Tracks whether this promise has already settled — the exit handler
+    // below needs to know whether a crash happened DURING startup (in which
+    // case it must reject so app.whenReady()'s .catch() shows the startup
+    // error dialog) or AFTER (in which case rejecting a promise nobody is
+    // still awaiting would do nothing, and it should show its own dialog
+    // instead).
+    let settled = false;
+    const resolve = (...args) => { settled = true; resolveOuter(...args); };
+    const reject = (...args) => { settled = true; rejectOuter(...args); };
+
     const appDir = IS_PROD
       ? path.join(process.resourcesPath, 'app')
       : path.join(__dirname, '..');
@@ -179,7 +224,11 @@ function startNextServer() {
     const { jwtSecret, adminPin } = ensureLocalCredentials();
 
     // Start Next.js built server using Electron's embedded Node.js
-    nextProcess = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--port', NEXT_PORT], {
+    // --hostname 127.0.0.1 — without it, Next's production server binds to
+    // 0.0.0.0 (every network interface), so anyone else on the same shop
+    // LAN/Wi-Fi could reach this cashier's backend directly, not just this
+    // window. There's no legitimate reason for another device to talk to it.
+    nextProcess = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--port', NEXT_PORT, '--hostname', '127.0.0.1'], {
       cwd: appDir,
       env: {
         ...process.env,
@@ -210,22 +259,33 @@ function startNextServer() {
 
     nextProcess.on('error', reject);
 
-    // Previously there was no handler at all for the server dying AFTER
-    // startup succeeded — the window just kept showing its last-rendered
-    // page while every subsequent request silently failed, with nothing
-    // telling the cashier the backend was gone.
+    // Handles the server dying both AFTER startup succeeded (the window was
+    // showing its last-rendered page while every request silently failed,
+    // with nothing telling the cashier the backend was gone) AND DURING
+    // startup itself (previously fell through with no dialog and no reject
+    // — e.g. a leftover process from a prior run left port 3000 bound,
+    // `next start` exits almost instantly with EADDRINUSE before any
+    // "Ready" output, and the whole app just silently vanished on launch).
     nextProcess.on('exit', (code, signal) => {
       const wasIntentional = isShuttingDown;
       nextProcess = null;
       if (wasIntentional) return;
 
-      console.error(`[Kajri POS] Next.js server exited unexpectedly (code=${code}, signal=${signal}).`);
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        dialog.showErrorBox(
-          'Kajri POS — Server Stopped',
-          `The application server stopped unexpectedly and Kajri POS can no longer function.\n\nPlease close and reopen the app. If this keeps happening, contact support with the log file:\n${path.join(app.getPath('userData'), 'logs', 'main.log')}`
-        );
+      const message = `Next.js server exited unexpectedly (code=${code}, signal=${signal}).`;
+      console.error(`[Kajri POS] ${message}`);
+
+      if (!settled) {
+        // Still inside startNextServer() — reject so app.whenReady()'s own
+        // catch handler shows the startup-error dialog and quits, instead
+        // of a second, redundant one from here.
+        reject(new Error(message));
+        return;
       }
+
+      dialog.showErrorBox(
+        'Kajri POS — Server Stopped',
+        `The application server stopped unexpectedly and Kajri POS can no longer function.\n\nPlease close and reopen the app. If this keeps happening, contact support with the log file:\n${path.join(app.getPath('userData'), 'logs', 'main.log')}`
+      );
       app.quit();
     });
 

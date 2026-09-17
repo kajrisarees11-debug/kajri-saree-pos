@@ -31,6 +31,22 @@ async function resolveMongoUri() {
   }
 }
 
+// Drops the cached connection so the next dbConnect() call re-resolves the
+// URI (env var or, on desktop, whatever's now stored in Settings → Cloud
+// Sync) instead of reusing whatever was first resolved for the lifetime of
+// this process. Call this whenever mongoSyncUri changes — otherwise a
+// corrected/repointed URI is silently ignored until a full app restart.
+export function resetDbConnection() {
+  const hadConnection = !!cached.conn;
+  cached.conn = null;
+  cached.promise = null;
+  if (hadConnection) {
+    mongoose.disconnect().catch((err) => {
+      console.error('[db] Error disconnecting previous Mongo connection:', err.message);
+    });
+  }
+}
+
 async function dbConnect() {
   if (cached.conn) {
     return cached.conn;

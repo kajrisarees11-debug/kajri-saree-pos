@@ -1,5 +1,5 @@
 import dbConnect from '@/lib/db';
-import sqliteDb from '@/lib/sqlite';
+import sqliteDb, { getOrCreateDeviceId } from '@/lib/sqlite';
 
 // Import all Mongoose models
 import Product from '@/lib/models/Product';
@@ -47,8 +47,10 @@ let isSyncing = false;
  * Pushes all pending local changes in SQLite's sync_queue to MongoDB.
  *
  * Idempotent by design: each job is applied to MongoDB and marked "applied"
- * (via a SyncLog document keyed by the job's local id) inside a single Mongo
- * transaction. If the desktop app crashes/loses power between that
+ * (via a SyncLog document keyed by `${deviceId}:${job's local id}` — the
+ * device scoping matters, since the local id alone is just an autoincrement
+ * counter that starts at 1 independently on every install) inside a single
+ * Mongo transaction. If the desktop app crashes/loses power between that
  * transaction committing and the local `DELETE FROM sync_queue` running, the
  * job gets retried on the next sync — but the SyncLog marker check means it's
  * skipped rather than re-applied, so a stock/balance $inc can never be
@@ -67,6 +69,7 @@ export async function processSyncQueue() {
 
     await dbConnect();
     const mongoose = (await import('mongoose')).default;
+    const deviceId = getOrCreateDeviceId();
     let processedCount = 0;
     const stuckJobs = [];
 
@@ -78,11 +81,13 @@ export async function processSyncQueue() {
         continue;
       }
 
+      const syncLogId = `${deviceId}:${job.id}`;
+
       try {
         const session = await mongoose.startSession();
         try {
           await session.withTransaction(async () => {
-            const alreadyApplied = await SyncLog.findById(job.id).session(session);
+            const alreadyApplied = await SyncLog.findById(syncLogId).session(session);
             if (alreadyApplied) return; // exactly-once guard — see module docblock
 
             if (job.action === 'INSERT') {
@@ -97,7 +102,7 @@ export async function processSyncQueue() {
             }
 
             await SyncLog.create([{
-              _id: job.id, collectionName: job.collectionName, documentId: job.documentId, action: job.action,
+              _id: syncLogId, collectionName: job.collectionName, documentId: job.documentId, action: job.action,
             }], { session });
           });
         } finally {

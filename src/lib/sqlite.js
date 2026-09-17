@@ -84,6 +84,7 @@ function initializeSchemas() {
       description TEXT,
       price REAL,
       purchasePrice REAL,
+      taxRate REAL DEFAULT 0,
       stock INTEGER DEFAULT 0,
       minStock INTEGER DEFAULT 5,
       categoryId TEXT,
@@ -242,6 +243,7 @@ function initializeSchemas() {
       printerName TEXT,
       autoPrint INTEGER DEFAULT 0, -- 0 for false, 1 for true
       mongoSyncUri TEXT, -- this device's MongoDB connection string for cloud sync; never leaves this machine
+      deviceId TEXT, -- random per-install id; scopes this device's sync idempotency markers so two terminals' local job ids never collide
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -266,6 +268,8 @@ function migrateSchema() {
     () => { if (!hasColumn('invoices', 'idempotencyKey')) db.exec('ALTER TABLE invoices ADD COLUMN idempotencyKey TEXT'); },
     () => { if (!hasColumn('purchases', 'amountPaid')) db.exec('ALTER TABLE purchases ADD COLUMN amountPaid REAL DEFAULT 0'); },
     () => { if (!hasColumn('settings', 'mongoSyncUri')) db.exec('ALTER TABLE settings ADD COLUMN mongoSyncUri TEXT'); },
+    () => { if (!hasColumn('products', 'taxRate')) db.exec('ALTER TABLE products ADD COLUMN taxRate REAL DEFAULT 0'); },
+    () => { if (!hasColumn('settings', 'deviceId')) db.exec('ALTER TABLE settings ADD COLUMN deviceId TEXT'); },
     // Partial unique indexes — safe to (re)create on every boot; only ever
     // reject an insert going forward, never destructive to existing rows.
     () => db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_idempotency ON invoices(idempotencyKey) WHERE idempotencyKey IS NOT NULL`),
@@ -286,6 +290,31 @@ function migrateSchema() {
 }
 
 initializeSchemas();
+
+/**
+ * A random id unique to this SQLite install, generated once and persisted
+ * in the settings row. Used to scope this device's sync idempotency markers
+ * (SyncLog._id) — without it, two desktop terminals sharing one MongoDB
+ * cluster would both independently generate local sync_queue ids starting
+ * at 1, and a collision would make one terminal's marker look like it
+ * already covers a completely different terminal's job, silently dropping
+ * that change. See syncEngine.js processSyncQueue().
+ */
+export function getOrCreateDeviceId() {
+  const existing = db.prepare('SELECT deviceId FROM settings LIMIT 1').get();
+  if (existing?.deviceId) return existing.deviceId;
+
+  const deviceId = crypto.randomUUID();
+  const row = db.prepare('SELECT _id FROM settings LIMIT 1').get();
+  if (row) {
+    db.prepare('UPDATE settings SET deviceId = ? WHERE _id = ?').run(deviceId, row._id);
+  } else {
+    const _id = generateObjectId();
+    const now = new Date().toISOString();
+    db.prepare('INSERT INTO settings (_id, deviceId, createdAt, updatedAt) VALUES (?, ?, ?, ?)').run(_id, deviceId, now, now);
+  }
+  return deviceId;
+}
 
 /**
  * Queue a mutation to be pushed to MongoDB later.

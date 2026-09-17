@@ -26,12 +26,28 @@ export function generateObjectId() {
 // clause would be built from raw client JSON keys (`Object.keys(body)`), letting
 // a caller name arbitrary/internal columns or smuggle SQL fragments in as a "key".
 const ALLOWED_UPDATE_FIELDS = {
-  products: ['name', 'sku', 'barcode', 'description', 'price', 'purchasePrice', 'stock', 'minStock', 'categoryId', 'subCategory', 'supplierId', 'images', 'fabric', 'colour', 'sareeType', 'brand', 'design', 'status', 'updatedAt'],
+  products: ['name', 'sku', 'barcode', 'description', 'price', 'purchasePrice', 'taxRate', 'stock', 'minStock', 'categoryId', 'subCategory', 'supplierId', 'images', 'fabric', 'colour', 'sareeType', 'brand', 'design', 'status', 'updatedAt'],
   customers: ['name', 'mobileNumber', 'email', 'address', 'city', 'pincode', 'outstandingBalance', 'totalPurchases', 'gstin', 'customerType', 'updatedAt'],
   suppliers: ['name', 'contactNumber', 'phone', 'email', 'address', 'city', 'gstin', 'payableBalance', 'outstandingBalance', 'purchaseHistory', 'bankName', 'accountNumber', 'ifscCode', 'upiId', 'notes', 'updatedAt'],
   invoices: ['invoiceNumber', 'customerId', 'items', 'subTotal', 'taxTotal', 'discountTotal', 'grandTotal', 'paymentMethod', 'amountPaid', 'balance', 'status', 'returnReason', 'refundTotal', 'updatedAt'],
   purchases: ['supplierId', 'invoiceNumber', 'date', 'items', 'totalAmount', 'status', 'notes', 'updatedAt'],
   settings: ['storeName', 'phone', 'address', 'email', 'gstin', 'invoicePrefix', 'defaultTaxRate', 'terms', 'pageSize', 'printerName', 'autoPrint', 'mongoSyncUri', 'updatedAt'],
+};
+
+// The same whitelist, applied to the Mongo/IS_CLOUD branch of every
+// create()/update() — previously ALLOWED_UPDATE_FIELDS was only ever
+// consulted on the SQLite branch, so the cloud/production backend accepted
+// ANY field a caller included with no filtering at all. For most collections
+// the writable field names are identical across both backends, but the
+// Mongo Product collection is shared with a separate live storefront app
+// with its own e-commerce-only fields (isFeatured, isTrending, coverImage,
+// tags, variants, seoTitle, ...) that this POS app must never let a caller
+// touch — and it uses different field names for a couple of columns
+// (`category`, a real ObjectId ref, instead of SQLite's free-text
+// `categoryId`; `color` instead of `colour`), so products gets its own list
+// rather than reusing the SQLite one verbatim.
+const ALLOWED_UPDATE_FIELDS_MONGO = {
+  products: ['name', 'sku', 'barcode', 'description', 'price', 'purchasePrice', 'mrp', 'taxRate', 'stock', 'minStock', 'subCategory', 'supplierId', 'images', 'fabric', 'color', 'sareeType', 'brand', 'status', 'updatedAt'],
 };
 
 // Escapes regex metacharacters in user-supplied search text before it's used
@@ -43,6 +59,15 @@ function escapeRegex(str) {
 
 function pickAllowedFields(table, obj) {
   const allowed = ALLOWED_UPDATE_FIELDS[table];
+  const out = {};
+  for (const key of Object.keys(obj)) {
+    if (allowed.includes(key)) out[key] = obj[key];
+  }
+  return out;
+}
+
+function pickAllowedFieldsMongo(table, obj) {
+  const allowed = ALLOWED_UPDATE_FIELDS_MONGO[table] || ALLOWED_UPDATE_FIELDS[table];
   const out = {};
   for (const key of Object.keys(obj)) {
     if (allowed.includes(key)) out[key] = obj[key];
@@ -140,7 +165,11 @@ export const products = {
     const now = new Date().toISOString();
     if (IS_CLOUD) {
       const { Product } = await getMongo();
-      const doc = await Product.create({ ...body, _id, createdAt: now, updatedAt: now });
+      // pickAllowedFieldsMongo drops the dashboard's free-text `category`
+      // field (e.g. "Saree") here — Mongo's `category` is a real ObjectId
+      // ref shared with a separate storefront app, and passing a plain
+      // string into it throws a CastError on every single create.
+      const doc = await Product.create({ ...pickAllowedFieldsMongo('products', body), _id, createdAt: now, updatedAt: now });
       return toPlain(doc);
     } else {
       const db = getSqlite();
@@ -148,7 +177,7 @@ export const products = {
       const data = {
         _id, name: body.name || '', sku: body.sku || null, barcode: body.barcode || null,
         description: body.description || null, price: body.price || 0,
-        purchasePrice: body.purchasePrice || 0, stock: body.stock || 0, minStock: body.minStock || 5,
+        purchasePrice: body.purchasePrice || 0, taxRate: body.taxRate ?? 0, stock: body.stock || 0, minStock: body.minStock || 5,
         categoryId: body.category || body.categoryId || null, subCategory: body.subCategory || null,
         supplierId: body.supplierId || null, images: JSON.stringify(body.images || []),
         fabric: body.fabric || null, colour: body.colour || null, sareeType: body.sareeType || null,
@@ -168,8 +197,7 @@ export const products = {
     const now = new Date().toISOString();
     if (IS_CLOUD) {
       const { Product } = await getMongo();
-      const update = { ...body, updatedAt: now };
-      delete update._id;
+      const update = { ...pickAllowedFieldsMongo('products', body), updatedAt: now };
       const doc = await Product.findByIdAndUpdate(id, update, { new: true }).lean();
       return doc ? { ...doc, _id: doc._id.toString(), images: doc.images || [] } : null;
     } else {
@@ -285,7 +313,7 @@ export const customers = {
     if (IS_CLOUD) {
       const { POSCustomer } = await getMongo();
       try {
-        const doc = await POSCustomer.create({ ...body, _id, createdAt: now, updatedAt: now });
+        const doc = await POSCustomer.create({ ...pickAllowedFields('customers', body), _id, createdAt: now, updatedAt: now });
         return toPlain(doc);
       } catch (err) {
         if (err.code === 11000 && body.mobileNumber) {
@@ -325,7 +353,7 @@ export const customers = {
     const now = new Date().toISOString();
     if (IS_CLOUD) {
       const { POSCustomer } = await getMongo();
-      const update = { ...body, updatedAt: now }; delete update._id;
+      const update = { ...pickAllowedFields('customers', body), updatedAt: now };
       const doc = await POSCustomer.findByIdAndUpdate(id, update, { new: true }).lean();
       return doc ? { ...doc, _id: doc._id.toString() } : null;
     } else {
@@ -376,7 +404,7 @@ export const suppliers = {
     const now = new Date().toISOString();
     if (IS_CLOUD) {
       const { Supplier } = await getMongo();
-      const doc = await Supplier.create({ ...body, _id, createdAt: now, updatedAt: now });
+      const doc = await Supplier.create({ ...pickAllowedFields('suppliers', body), _id, createdAt: now, updatedAt: now });
       return toPlain(doc);
     } else {
       const db = getSqlite();
@@ -403,7 +431,7 @@ export const suppliers = {
     const now = new Date().toISOString();
     if (IS_CLOUD) {
       const { Supplier } = await getMongo();
-      const update = { ...body, updatedAt: now }; delete update._id;
+      const update = { ...pickAllowedFields('suppliers', body), updatedAt: now };
       const doc = await Supplier.findByIdAndUpdate(id, update, { new: true }).lean();
       return doc ? { ...doc, _id: doc._id.toString() } : null;
     } else {
@@ -419,6 +447,105 @@ export const suppliers = {
     }
   },
 };
+
+// Looks up the AUTHORITATIVE server-side price/taxRate for a set of product
+// ids — used to recompute an invoice's totals instead of trusting whatever
+// price/taxRate the client claims for each cart line.
+async function getProductPriceMap(productIds) {
+  const ids = [...new Set(productIds.filter(Boolean).map(String))];
+  const map = new Map();
+  if (ids.length === 0) return map;
+  if (IS_CLOUD) {
+    const { Product } = await getMongo();
+    const docs = await Product.find({ _id: { $in: ids } }, 'price taxRate').lean();
+    for (const d of docs) map.set(d._id.toString(), { price: d.price || 0, taxRate: d.taxRate || 0 });
+  } else {
+    const db = getSqlite();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db.prepare(`SELECT _id, price, taxRate FROM products WHERE _id IN (${placeholders})`).all(...ids);
+    for (const r of rows) map.set(r._id, { price: r.price || 0, taxRate: r.taxRate || 0 });
+  }
+  return map;
+}
+
+// Recomputes subTotal/taxTotal/grandTotal from each item's real, current
+// product price/taxRate rather than the client-supplied item.price —
+// otherwise a compromised or buggy POS client can submit real items
+// (deducting real stock) alongside an arbitrary low grandTotal, permanently
+// understating revenue with no reconciliation path once the stock is gone.
+// Rejects the request if the client's declared grandTotal diverges from the
+// recomputed one by more than a couple of rupees (rounding tolerance).
+async function recomputeInvoiceTotals(body) {
+  const items = Array.isArray(body.items) ? body.items : [];
+  const priceMap = await getProductPriceMap(items.map((i) => i.productId));
+
+  let subTotal = 0;
+  let taxTotal = 0;
+  for (const item of items) {
+    const known = priceMap.get(String(item.productId));
+    // A cart line with no matching product (e.g. a manual/non-catalog line)
+    // has no authoritative price to check against — trust the client for
+    // that line only, same as before this fix.
+    const price = known ? known.price : Number(item.price) || 0;
+    const taxRate = known ? known.taxRate : Number(item.taxRate) || 0;
+    const qty = Number(item.quantity) || 0;
+    subTotal += price * qty;
+    taxTotal += ((price * taxRate) / 100) * qty;
+  }
+
+  const discountTotal = Number(body.discountTotal) || 0;
+  const grandTotal = Math.max(0, Math.round((subTotal + taxTotal - discountTotal) * 100) / 100);
+  const clientGrandTotal = Number(body.grandTotal) || 0;
+
+  if (Math.abs(clientGrandTotal - grandTotal) > 2) {
+    const err = new Error(
+      `Invoice total does not match server-computed price (expected ~₹${grandTotal.toFixed(2)}, received ₹${clientGrandTotal.toFixed(2)}). Please refresh product prices and retry.`
+    );
+    err.code = 'TOTAL_MISMATCH';
+    throw err;
+  }
+
+  return { ...body, subTotal, taxTotal, grandTotal };
+}
+
+// Mirrors validateReturnAgainstPurchase() in the purchase-return route — a
+// sales return had no equivalent check at all, letting a caller return more
+// of a product than the invoice ever sold, or claim a refund larger than the
+// invoice's own total.
+function validateReturnAgainstInvoice(invoice, invoiceItems, returnItems, refundTotal) {
+  const originalQtyByProduct = new Map();
+  for (const item of invoiceItems || []) {
+    const pid = item.productId?.toString ? item.productId.toString() : item.productId;
+    originalQtyByProduct.set(pid, (originalQtyByProduct.get(pid) || 0) + (item.quantity || 0));
+  }
+  for (const item of returnItems || []) {
+    if (!(item.returnQty > 0) || !item.productId) continue;
+    const originalQty = originalQtyByProduct.get(item.productId) || 0;
+    if (item.returnQty > originalQty) {
+      return `Cannot return ${item.returnQty} units of product ${item.productId} — only ${originalQty} were on this invoice.`;
+    }
+  }
+  if ((refundTotal || 0) > (invoice.grandTotal || 0) + 0.01) {
+    return `Refund amount (₹${refundTotal}) exceeds the invoice's total amount (₹${invoice.grandTotal}).`;
+  }
+  return null;
+}
+
+// How much of a customer's outstandingBalance a return should actually
+// reverse. This is NOT refundTotal (the value of the returned goods) — it's
+// only the DEBT this specific invoice contributed at sale time
+// (grandTotal - amountPaid, from createWithEffects' own balanceAdded logic),
+// pro-rated by how much of the sale is being returned. A fully-paid sale
+// (no debt ever created) correctly reverses nothing regardless of
+// refundTotal; a fully-Udhaar sale reverses its full debt on a full return.
+function debtReversalForReturn(invoice, refundTotal) {
+  const grandTotal = invoice.grandTotal || 0;
+  if (grandTotal <= 0) return 0;
+  const originalDebt = Math.max(0, grandTotal - (invoice.amountPaid || 0));
+  if (originalDebt <= 0) return 0;
+  const returnedFraction = Math.min(1, (refundTotal || 0) / grandTotal);
+  return Math.round(originalDebt * returnedFraction * 100) / 100;
+}
 
 // ─── Invoices ─────────────────────────────────────────────────────────────────
 export const invoices = {
@@ -538,8 +665,9 @@ export const invoices = {
   // Idempotent the same way create() is: a repeat call with the same
   // idempotencyKey returns the original invoice (isNew: false) and applies
   // no side effects again.
-  async createWithEffects(body) {
+  async createWithEffects(rawBody) {
     const now = new Date().toISOString();
+    const body = await recomputeInvoiceTotals(rawBody);
     const items = Array.isArray(body.items) ? body.items : [];
     let balanceAdded = 0;
     if (body.customerId) {
@@ -568,7 +696,11 @@ export const invoices = {
       let created;
       try {
         await session.withTransaction(async () => {
-          const [doc] = await POSInvoice.create([{ ...body, _id, createdAt: now, updatedAt: now }], { session });
+          // Preserve the ORIGINAL sale time for an offline-queued invoice
+          // synced later — otherwise every offline sale gets stamped with
+          // whenever connectivity happened to return instead of when it
+          // actually happened, skewing reports for that period.
+          const [doc] = await POSInvoice.create([{ ...body, _id, createdAt: body.createdAt || now, updatedAt: now }], { session });
           created = doc;
 
           for (const item of items) {
@@ -633,7 +765,9 @@ export const invoices = {
         discountTotal: body.discountTotal || 0, grandTotal: body.grandTotal || 0,
         paymentMethod: body.paymentMethod || 'Cash', amountPaid: body.amountPaid || 0,
         balance: body.balance || 0, status: body.status || 'Completed',
-        createdAt: now, updatedAt: now,
+        // See the matching comment in the Mongo branch above — preserve the
+        // original offline sale time rather than the sync time.
+        createdAt: body.createdAt || now, updatedAt: now,
       };
 
       try {
@@ -697,7 +831,7 @@ export const invoices = {
     const now = new Date().toISOString();
     if (IS_CLOUD) {
       const { POSInvoice } = await getMongo();
-      const update = { ...body, updatedAt: now }; delete update._id;
+      const update = { ...pickAllowedFields('invoices', body), updatedAt: now };
       const doc = await POSInvoice.findByIdAndUpdate(id, update, { new: true }).lean();
       return doc ? { ...doc, _id: doc._id.toString(), items: doc.items || [] } : null;
     } else {
@@ -720,7 +854,7 @@ export const invoices = {
   // mark the invoice Returned. Shared by /api/invoices/[id]/return and the
   // legacy /api/returns endpoint so both go through the exact same logic
   // instead of one re-implementing it via a fragile self-HTTP-call.
-  async processReturn(id, { items, reason, refundTotal } = {}) {
+  async processReturn(id, { items, reason, refundTotal = 0 } = {}) {
     const timestamp = new Date().toISOString();
 
     if (IS_CLOUD) {
@@ -730,6 +864,9 @@ export const invoices = {
       const invoice = await POSInvoice.findById(id).lean();
       if (!invoice) { const e = new Error('Invoice not found'); e.code = 'NOT_FOUND'; throw e; }
       if (invoice.status === 'Returned') { const e = new Error('Invoice already returned'); e.code = 'ALREADY_RETURNED'; throw e; }
+      const validationError = validateReturnAgainstInvoice(invoice, invoice.items || [], items, refundTotal);
+      if (validationError) { const e = new Error(validationError); e.code = 'INVALID_RETURN'; throw e; }
+      const debtReversal = debtReversalForReturn(invoice, refundTotal);
 
       const session = await mongoose.startSession();
       try {
@@ -741,10 +878,17 @@ export const invoices = {
               }
             }
           }
-          if (invoice.paymentMethod === 'Udhaar' && invoice.customerId && refundTotal > 0) {
+          // Reverses whatever customer debt THIS invoice actually created at
+          // sale time (grandTotal - amountPaid, pro-rated by how much of the
+          // sale is being returned) — not just Udhaar-labeled invoices. A
+          // "Cash" sale checked out with amountPaid < grandTotal creates the
+          // exact same kind of debt (see createWithEffects), which a return
+          // must unwind the same way or the customer is left owing money on
+          // goods they no longer have.
+          if (invoice.customerId && debtReversal > 0) {
             const customer = await POSCustomer.findById(invoice.customerId).session(session);
             if (customer) {
-              customer.outstandingBalance = Math.max(0, (customer.outstandingBalance || 0) - refundTotal);
+              customer.outstandingBalance = Math.max(0, (customer.outstandingBalance || 0) - debtReversal);
               customer.updatedAt = timestamp;
               await customer.save({ session });
             }
@@ -754,7 +898,7 @@ export const invoices = {
             // real (customer.outstandingBalance) balance.
             await Ledger.create([{
               _id: generateObjectId(), entityType: 'POSCustomer', entityId: invoice.customerId,
-              transactionType: 'Credit', amount: refundTotal,
+              transactionType: 'Credit', amount: debtReversal,
               description: `Return against Invoice ${invoice.invoiceNumber}${reason ? ` — ${reason}` : ''}`,
               date: timestamp, createdAt: timestamp, updatedAt: timestamp,
             }], { session });
@@ -775,6 +919,10 @@ export const invoices = {
     const invoice = db.prepare('SELECT * FROM invoices WHERE _id = ?').get(id);
     if (!invoice) { const e = new Error('Invoice not found'); e.code = 'NOT_FOUND'; throw e; }
     if (invoice.status === 'Returned') { const e = new Error('Invoice already returned'); e.code = 'ALREADY_RETURNED'; throw e; }
+    const invoiceItems = invoice.items ? JSON.parse(invoice.items) : [];
+    const validationError = validateReturnAgainstInvoice(invoice, invoiceItems, items, refundTotal);
+    if (validationError) { const e = new Error(validationError); e.code = 'INVALID_RETURN'; throw e; }
+    const debtReversal = debtReversalForReturn(invoice, refundTotal);
 
     db.transaction(() => {
       if (Array.isArray(items) && items.length > 0) {
@@ -786,15 +934,15 @@ export const invoices = {
           }
         }
       }
-      if (invoice.paymentMethod === 'Udhaar' && invoice.customerId && refundTotal > 0) {
+      if (invoice.customerId && debtReversal > 0) {
         db.prepare('UPDATE customers SET outstandingBalance = MAX(0, outstandingBalance - ?), updatedAt = ? WHERE _id = ?')
-          .run(refundTotal, timestamp, invoice.customerId);
-        queueSync('UPDATE', 'customers', invoice.customerId, { $inc: { outstandingBalance: -refundTotal }, updatedAt: timestamp });
+          .run(debtReversal, timestamp, invoice.customerId);
+        queueSync('UPDATE', 'customers', invoice.customerId, { $inc: { outstandingBalance: -debtReversal }, updatedAt: timestamp });
 
         const ledgerId = generateObjectId();
         const ledgerRow = {
           _id: ledgerId, entityType: 'POSCustomer', entityId: invoice.customerId,
-          transactionType: 'Credit', amount: refundTotal,
+          transactionType: 'Credit', amount: debtReversal,
           description: `Return against Invoice ${invoice.invoiceNumber}${reason ? ` — ${reason}` : ''}`,
           date: timestamp, createdAt: timestamp, updatedAt: timestamp,
         };
@@ -1003,7 +1151,7 @@ export const settings = {
   async upsert(body) {
     if (IS_CLOUD) {
       const { StoreConfig } = await getMongo();
-      const { _id, ...update } = body;
+      const update = pickAllowedFields('settings', body);
       const doc = await StoreConfig.findOneAndUpdate({}, update, {
         new: true, upsert: true, setDefaultsOnInsert: true,
       }).lean();
@@ -1011,6 +1159,15 @@ export const settings = {
     } else {
       const db = getSqlite();
       const now = new Date().toISOString();
+      // mongoSyncUri changed — the cached Mongo connection (module-scoped in
+      // db.js) was resolved from whatever URI was set at the time of the
+      // FIRST sync and never re-checked afterward, so without this, saving a
+      // corrected/repointed URI here would keep silently syncing to the OLD
+      // database until the app is fully restarted.
+      if ('mongoSyncUri' in body) {
+        const { resetDbConnection } = require('@/lib/db');
+        resetDbConnection();
+      }
       const existing = db.prepare('SELECT _id FROM settings LIMIT 1').get();
       if (existing) {
         const updateData = pickAllowedFields('settings', { ...body, updatedAt: now });

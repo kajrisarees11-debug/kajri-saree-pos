@@ -3,8 +3,20 @@ import { useEffect, useState, Suspense } from 'react';
 import { Printer } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 
+// Used only when Settings hasn't been fetched successfully yet — never the
+// silent, permanent header every store printed regardless of what they'd
+// actually configured.
+const DEFAULT_SETTINGS = {
+  storeName: 'Kajri Sarees',
+  address: '123, Textile Market, Ring Road, Surat, Gujarat - 395002',
+  gstin: '24AAAAA0000A1Z5',
+  phone: '+91 9876543210',
+  terms: '1. Goods once sold will not be taken back or exchanged.\n2. Subject to Surat jurisdiction only.',
+};
+
 function A4InvoiceContent() {
   const [invoice, setInvoice] = useState(null);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const searchParams = useSearchParams();
@@ -33,6 +45,15 @@ function A4InvoiceContent() {
       }
     };
     fetchInvoice();
+
+    // Tax invoices must show the store's ACTUAL configured details, not a
+    // hardcoded placeholder — GSTIN in particular is a statutory-compliance
+    // requirement, not cosmetic. Falls back to the defaults above only if
+    // this fetch fails, rather than blocking printing on it.
+    fetch('/api/settings')
+      .then((res) => res.json())
+      .then((data) => { if (data.success && data.data) setSettings((prev) => ({ ...prev, ...data.data })); })
+      .catch((err) => console.error('Failed to load store settings for invoice print:', err));
   }, [searchParams]);
 
   useEffect(() => {
@@ -66,11 +87,10 @@ function A4InvoiceContent() {
         {/* Header */}
         <div className="flex justify-between items-start border-b-2 border-gray-800 pb-6 mb-6">
           <div>
-            <h1 className="text-4xl font-bold font-serif uppercase tracking-widest text-gray-900 mb-2">KAJRI SAREES</h1>
-            <p className="text-sm text-gray-600">123, Textile Market, Ring Road</p>
-            <p className="text-sm text-gray-600">Surat, Gujarat - 395002</p>
-            <p className="text-sm text-gray-600 font-medium mt-1">GSTIN: 24AAAAA0000A1Z5</p>
-            <p className="text-sm text-gray-600 mt-1">Phone: +91 9876543210</p>
+            <h1 className="text-4xl font-bold font-serif uppercase tracking-widest text-gray-900 mb-2">{settings.storeName || DEFAULT_SETTINGS.storeName}</h1>
+            <p className="text-sm text-gray-600 whitespace-pre-line">{settings.address || DEFAULT_SETTINGS.address}</p>
+            <p className="text-sm text-gray-600 font-medium mt-1">GSTIN: {settings.gstin || DEFAULT_SETTINGS.gstin}</p>
+            <p className="text-sm text-gray-600 mt-1">Phone: {settings.phone || DEFAULT_SETTINGS.phone}</p>
           </div>
           <div className="text-right">
             <h2 className="text-3xl font-bold text-gray-300 uppercase tracking-widest mb-2">TAX INVOICE</h2>
@@ -157,11 +177,10 @@ function A4InvoiceContent() {
         <div className="flex justify-between items-end mt-auto pt-8 border-t border-gray-300">
           <div className="text-xs text-gray-600">
             <p className="font-bold mb-1">Terms & Conditions:</p>
-            <p>1. Goods once sold will not be taken back or exchanged.</p>
-            <p>2. Subject to Surat jurisdiction only.</p>
+            {(settings.terms || DEFAULT_SETTINGS.terms).split('\n').map((line, i) => <p key={i}>{line}</p>)}
           </div>
           <div className="text-center">
-            <p className="text-xs text-gray-500 mb-8">For Kajri Sarees</p>
+            <p className="text-xs text-gray-500 mb-8">For {settings.storeName || DEFAULT_SETTINGS.storeName}</p>
             <p className="text-sm font-bold text-gray-800 border-t border-gray-400 pt-2 w-48 mx-auto">Authorized Signatory</p>
           </div>
         </div>

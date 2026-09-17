@@ -45,6 +45,14 @@ export default function POSPage() {
   const [amountPaid, setAmountPaid] = useState('');
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
+  // Set when window.open() for the receipt tab was blocked — most likely
+  // because it fired well after the click that started checkout (e.g. the
+  // offline-fallback path only reaches this point after a 10s timeout, long
+  // past any browser's popup-blocker exemption window). The sale itself is
+  // always safely saved either way; this only affects whether a receipt
+  // actually opened, so it needs a visible, persistent way to retry rather
+  // than silently vanishing.
+  const [blockedReceiptUrl, setBlockedReceiptUrl] = useState(null);
 
   // Live search state
   const [searchResults, setSearchResults] = useState([]);
@@ -221,18 +229,26 @@ export default function POSPage() {
 
     let product = null;
 
+    // Both branches require an EXACT barcode/SKU match here — the backing
+    // search is a case-insensitive SUBSTRING match, so a scanned code that's
+    // damaged/mistyped or genuinely unregistered but happens to be a
+    // substring of some OTHER product's SKU/name must be reported as "not
+    // found", not silently add that unrelated product to the cart at its
+    // own price with no warning.
+    const exactMatch = (list) => list.find(p => p.barcode === code || p.sku?.toLowerCase() === code.toLowerCase()) || null;
+
     if (!isOnline) {
       product = await getCachedProductByBarcode(code);
       if (!product) {
         const results = await searchCachedProducts(code);
-        product = results[0] || null;
+        product = exactMatch(results);
       }
     } else {
       try {
         const res = await fetch(`/api/products?search=${encodeURIComponent(code)}`);
         const data = await res.json();
         if (data.success && data.data.length > 0) {
-          product = data.data.find(p => p.barcode === code || p.sku?.toLowerCase() === code.toLowerCase()) || data.data[0];
+          product = exactMatch(data.data);
         }
       } catch {
         product = await getCachedProductByBarcode(code);
@@ -268,6 +284,17 @@ export default function POSPage() {
   const balance = amountPaid ? Number(amountPaid) - grandTotal : 0;
 
   // Checkout execution
+  // window.open() only bypasses the popup blocker within a short window
+  // after a user gesture. That's fine right after the click that starts
+  // checkout, but the offline-fallback path only calls this once a 10s
+  // AbortController timeout has already elapsed — well past that window on
+  // most browsers, so the call silently returns null with no receipt tab
+  // and no error to catch. Surface a visible retry instead of losing that.
+  const openReceipt = (url) => {
+    const win = window.open(url, '_blank');
+    if (!win) setBlockedReceiptUrl(url);
+  };
+
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     setIsCheckingOut(true);
@@ -337,7 +364,7 @@ export default function POSPage() {
           ...offlinePayload,
           createdAt: new Date().toISOString(),
         }));
-        window.open('/pos/receipt?offline=1', '_blank');
+        openReceipt('/pos/receipt?offline=1');
       } catch (storageErr) {
         console.error('[POS] Could not open offline receipt:', storageErr);
       }
@@ -386,7 +413,7 @@ export default function POSPage() {
         setAmountPaid('');
         setPaymentMethod('Cash');
         barcodeInputRef.current?.focus();
-        window.open(`/pos/receipt?id=${data.data._id}`, '_blank');
+        openReceipt(`/pos/receipt?id=${data.data._id}`);
       } else {
         alert(`Checkout Failed: ${data.error}`);
       }
@@ -449,6 +476,27 @@ export default function POSPage() {
         </div>
       )}
 
+      {/* Receipt popup was blocked — stays up until manually dismissed/opened,
+          since a customer could otherwise walk away with no receipt printed
+          and nobody would notice. Clicking this button is itself a fresh user
+          gesture, so window.open() here is not blocked. */}
+      {blockedReceiptUrl && (
+        <div className="fixed top-12 left-1/2 -translate-x-1/2 z-50 bg-red-600 text-white px-6 py-3 rounded-xl shadow-2xl text-sm font-bold flex items-center gap-3">
+          <Printer className="w-5 h-5 shrink-0" />
+          <span>The sale was saved, but the receipt tab was blocked by the browser.</span>
+          <button
+            type="button"
+            onClick={() => { window.open(blockedReceiptUrl, '_blank'); setBlockedReceiptUrl(null); }}
+            className="bg-white text-red-700 px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors"
+          >
+            Open Receipt
+          </button>
+          <button type="button" onClick={() => setBlockedReceiptUrl(null)} className="text-white/80 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Left Area: Product Search & Cart */}
       <div className="flex-1 flex flex-col bg-white border-r border-gray-200">
         
@@ -460,7 +508,18 @@ export default function POSPage() {
               ref={barcodeInputRef}
               type="text" 
               value={barcodeInput}
-              onChange={(e) => setBarcodeInput(e.target.value)}
+              onChange={(e) => {
+                // Reset synchronously on every keystroke, not just once the
+                // debounced search effect replaces searchResults 150ms
+                // later — a barcode scanner types+Enters well under that
+                // delay, so without this, an Enter arriving before the
+                // debounce fires would still see a PRIOR dropdown
+                // selection (from earlier arrow-key browsing) and add that
+                // stale, unrelated product to the cart instead of the
+                // barcode actually just scanned.
+                setSelectedIndex(-1);
+                setBarcodeInput(e.target.value);
+              }}
               onKeyDown={handleKeyDown}
               placeholder="Scan Barcode or Type Saree Name / SKU (e.g. Silk, BSS-001)..." 
               className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-primary shadow-sm bg-white"

@@ -3,6 +3,17 @@ import { useEffect, useState, Suspense, useMemo } from 'react';
 import { Printer } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 
+// Matches the StoreConfig model's own schema defaults — used only until the
+// real Settings fetch resolves (or if it fails), never a silent, permanent
+// substitute for what the store actually configured.
+const DEFAULT_SETTINGS = {
+  storeName: 'Kajri Sarees',
+  address: '123, Textile Market, Surat, Gujarat - 395002',
+  gstin: '24AAAAA0000A1Z5',
+  phone: '+91 9876543210',
+  terms: 'Thanks for doing business with us!',
+};
+
 function POSReceipt() {
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -67,11 +78,21 @@ function POSReceipt() {
         // If Electron is available and autoPrint is true with a selected printer
         if (typeof window !== 'undefined' && window.kajriElectron && settings?.autoPrint && settings?.printerName) {
           try {
-            await window.kajriElectron.printPage({
+            const result = await window.kajriElectron.printPage({
               silent: true,
               deviceName: settings.printerName
             });
-            console.log(`Silently printed to ${settings.printerName}`);
+            // printPage() resolves (doesn't throw) even when the print
+            // itself failed — e.g. the named printer is off/unplugged — so
+            // a falsy result.success must fall back the same way a thrown
+            // error does, or the sale completes with no receipt printed and
+            // no indication anything went wrong.
+            if (result?.success) {
+              console.log(`Silently printed to ${settings.printerName}`);
+            } else {
+              console.error('Silent print failed:', result?.reason || 'unknown reason');
+              window.print();
+            }
           } catch (err) {
             console.error("Silent print failed:", err);
             window.print(); // fallback
@@ -137,15 +158,15 @@ function POSReceipt() {
           </h1>
         </div>
 
-        {/* Header Information */}
+        {/* Header Information — the store's ACTUAL configured details
+            (Settings page), not a hardcoded placeholder; GSTIN in
+            particular is a statutory requirement on a tax invoice. */}
         <div className="text-center mb-2">
-          <h2 className="text-sm font-bold uppercase tracking-wider mb-1">KAJRI SAREES</h2>
-          <p>SR .NO 167, SANTA NAGAR ,NEAR SHUBHAM MANGAL KAR</p>
-          <p>YALAY, WAGHOLI- LOHGAON ROAD PUNE</p>
-          <p>State: 27-Maharashtra</p>
-          <p>Ph.No.: 9920176603</p>
-          <p>Email: kajrisarees99@gmail.com</p>
-          <p>GSTIN: 27DKXPR8703P1ZU</p>
+          <h2 className="text-sm font-bold uppercase tracking-wider mb-1">{settings?.storeName || DEFAULT_SETTINGS.storeName}</h2>
+          <p className="whitespace-pre-line">{settings?.address || DEFAULT_SETTINGS.address}</p>
+          <p>Ph.No.: {settings?.phone || DEFAULT_SETTINGS.phone}</p>
+          {settings?.email && <p>Email: {settings.email}</p>}
+          <p>GSTIN: {settings?.gstin || DEFAULT_SETTINGS.gstin}</p>
         </div>
 
         <div className="border-t border-dashed border-gray-500 my-1"></div>
@@ -224,7 +245,7 @@ function POSReceipt() {
         {/* Terms */}
         <div className="text-center mt-2">
           <p className="font-semibold">Terms &amp; Conditions</p>
-          <p>Thanks for doing business with us!</p>
+          {(settings?.terms || DEFAULT_SETTINGS.terms).split('\n').map((line, i) => <p key={i}>{line}</p>)}
         </div>
 
       </div>

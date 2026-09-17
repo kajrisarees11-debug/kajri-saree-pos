@@ -9,8 +9,19 @@ const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 5 * 60 * 1000; // 5 minutes
 const attemptsByClient = new Map();
 
+// Only Vercel's own edge network can be trusted to have set/sanitized this
+// header itself — anywhere else (self-hosted `next start` on a shop LAN, or
+// the packaged Electron app) a client can send any X-Forwarded-For value it
+// likes, making every "new" value look like a fresh, never-throttled
+// client and defeating the lockout entirely (and growing this Map without
+// bound). Off Vercel, key everything on one shared bucket instead — there's
+// only a single shared PIN to protect here, so a global rate limit is the
+// correct model, not a per-claimed-IP one that can't actually be trusted.
 function getClientKey(request) {
-  return request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'local';
+  if (process.env.VERCEL) {
+    return request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'vercel-unknown';
+  }
+  return 'global';
 }
 
 export async function POST(request) {
@@ -48,7 +59,14 @@ export async function POST(request) {
       const cookieStore = await cookies();
       cookieStore.set('pos_auth_token', token, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        // Based on the ACTUAL request scheme, not NODE_ENV — `next start`
+        // (the documented self-hosted/LAN path) always runs with
+        // NODE_ENV=production regardless of whether there's TLS in front of
+        // it. A Secure cookie set over plain HTTP on a non-localhost origin
+        // is silently discarded by the browser per spec, which made login
+        // look like it succeeded (200 OK) while the cookie never actually
+        // persisted, bouncing the user straight back to /login.
+        secure: request.nextUrl.protocol === 'https:',
         sameSite: 'strict',
         maxAge: 60 * 60 * 24, // 24 hours
         path: '/',

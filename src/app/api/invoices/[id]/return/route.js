@@ -21,6 +21,9 @@ export async function POST(request, { params }) {
     if (error.code === 'ALREADY_RETURNED') {
       return NextResponse.json({ success: false, error: 'Invoice already returned' }, { status: 400 });
     }
+    if (error.code === 'INVALID_RETURN') {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    }
     console.error('[Invoice Return Error]', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
