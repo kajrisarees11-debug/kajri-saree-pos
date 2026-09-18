@@ -1,13 +1,11 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Lock, User } from 'lucide-react';
 
 export default function LoginPage() {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -23,8 +21,17 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (data.success) {
-        router.push('/dashboard');
-        router.refresh();
+        // A hard navigation, not router.push() — the client-side router
+        // cache can hold a STALE version of /dashboard from a background
+        // prefetch Next.js made while still unauthenticated (proxy.js would
+        // have redirected that prefetch back to /login), and router.push()
+        // can serve that cached redirect instead of re-checking auth state.
+        // That's exactly why this looked like "click login, nothing
+        // happens, works after enough retries" — a caching race, not a
+        // deterministic failure. A full navigation always hits the server
+        // fresh with the cookie that was just set.
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- intentional hard navigation, see comment above
+        window.location.href = '/dashboard';
       } else {
         setError(data.error || 'Invalid access code');
       }
