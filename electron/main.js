@@ -41,7 +41,11 @@ app.on('second-instance', () => {
 // Configuration
 // ──────────────────────────────────────────────
 const NEXT_PORT = 3000;
-const NEXT_URL  = `http://localhost:${NEXT_PORT}`;
+// 127.0.0.1, not "localhost" — the spawned server is bound with
+// --hostname 127.0.0.1 (IPv4 only, keeps it off the LAN); "localhost" can
+// resolve to the IPv6 loopback (::1) first on some Windows configurations,
+// which an IPv4-only server never answers on.
+const NEXT_URL  = `http://127.0.0.1:${NEXT_PORT}`;
 const IS_PROD   = app.isPackaged;
 const IS_DEV    = !IS_PROD;
 
