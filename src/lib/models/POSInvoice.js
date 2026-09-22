@@ -36,6 +36,6 @@ const POSInvoiceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-POSInvoiceSchema.index({ invoiceNumber: 1 });
+// invoiceNumber is already indexed via unique:true in the schema above.
 
 export default mongoose.models.POSInvoice || mongoose.model('POSInvoice', POSInvoiceSchema);

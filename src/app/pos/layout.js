@@ -12,8 +12,8 @@ export const metadata = {
 export default function POSLayout({ children }) {
   return (
     <NetworkStatusProvider>
-    <OfflineBanner />
-    <div className={`min-h-screen print:min-h-0 print:block bg-gray-50 flex flex-col ${inter.className}`}>
+    <div className={`h-screen print:h-auto print:block bg-gray-50 flex flex-col ${inter.className}`}>
+      <OfflineBanner />
       {/* Top Bar for POS */}
       <header className="h-14 bg-primary text-white flex items-center justify-between px-6 shadow-md z-10 shrink-0 print:hidden">
         <div className="flex items-center gap-6">

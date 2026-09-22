@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { IS_CLOUD } from '@/lib/dataAdapter';
+import '@/lib/dataAdapter';
 import dbConnect from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -41,111 +41,35 @@ async function getRawTotalsCloud() {
   };
 }
 
-function getRawTotalsSqlite() {
-  const db = require('@/lib/sqlite').default;
-
-  const invQuery = db.prepare('SELECT SUM(stock * purchasePrice) as val FROM products WHERE stock > 0').get();
-  const arQuery = db.prepare('SELECT SUM(outstandingBalance) as val FROM customers').get();
-  const apQuery = db.prepare('SELECT SUM(payableBalance) as val FROM suppliers').get();
-  // See the matching comment in getRawTotalsCloud() above.
-  const salesQuery = db.prepare('SELECT SUM(grandTotal - taxTotal) as sales, SUM(taxTotal) as tax FROM invoices WHERE status = \'Completed\'').get();
-  const returnsQuery = db.prepare('SELECT SUM(refundTotal) as val FROM invoices WHERE status = \'Returned\'').get();
-  const purchQuery = db.prepare('SELECT SUM(totalAmount) as val FROM purchases WHERE status != \'Cancelled\'').get();
-  const expQuery = db.prepare('SELECT SUM(amount) as val FROM expenses').get();
-
-  return {
-    inventory: invQuery.val || 0,
-    accountsReceivable: arQuery.val || 0,
-    accountsPayable: apQuery.val || 0,
-    totalSales: salesQuery.sales || 0,
-    taxPayable: salesQuery.tax || 0,
-    totalRefunded: returnsQuery.val || 0,
-    totalPurchases: purchQuery.val || 0,
-    totalExpenses: expQuery.val || 0,
-  };
-}
-
 export async function GET() {
   try {
-    let totals;
-    if (IS_CLOUD) {
-      await dbConnect();
-      totals = await getRawTotalsCloud();
-    } else {
-      totals = getRawTotalsSqlite();
-    }
+    await dbConnect();
+    const totals = await getRawTotalsCloud();
 
-    const { inventory, accountsReceivable, accountsPayable, totalSales, taxPayable, totalRefunded, totalPurchases, totalExpenses } = totals;
-    const grossSales = totalSales + taxPayable;
+    // The raw totals (sales, purchases, expenses) alone don't paint a
+    // complete accounting picture. We compute the derived metrics here
+    // (Gross Profit, Net Profit, Cash In Hand) so the client dashboard just
+    // renders them.
+    const grossProfit = totals.totalSales - (totals.inventory || 0); // Simplified COGS
+    const netProfit = totals.totalSales - totals.totalPurchases - totals.totalExpenses;
+    
+    // (sales + tax) is the gross money taken in; refundTotal is the gross money handed back out
+    const cashInHand = (totals.totalSales + totals.taxPayable) 
+                     - totals.totalRefunded
+                     - totals.totalPurchases 
+                     - totals.totalExpenses 
+                     - totals.accountsReceivable 
+                     + totals.accountsPayable;
 
-    // Cash In = Gross Sales - Uncollected Accounts Receivable - Refunds Paid Out
-    // Without subtracting totalRefunded, a fully-cash-refunded sale looked
-    // as if the cash were still in the till, since the cash actually paid
-    // back to the customer on a return was never accounted for anywhere.
-    const cashIn = grossSales - accountsReceivable - totalRefunded;
-    // Cash Out = (Purchases - Unpaid Accounts Payable) + Expenses
-    const cashOut = (totalPurchases - accountsPayable) + totalExpenses;
-    const cashAndBank = cashIn - cashOut;
-
-    // Derived Capital / Retained Earnings to balance the equation
-    // Debits = Inventory + AR + Cash + Purchases + Expenses
-    // Credits = AP + Sales + Tax + Capital
-    // Mathematically: Capital = Inventory - Tax (if starting from 0)
-    const capital = inventory - taxPayable;
-
-    // Profit = Sales - Purchases - Expenses
-    const netProfit = totalSales - totalPurchases - totalExpenses;
-
-    const data = {
-      trialBalance: {
-        debits: [
-          { account: 'Closing Stock (Inventory)', amount: inventory },
-          { account: 'Accounts Receivable (Debtors)', amount: accountsReceivable },
-          { account: 'Cash & Bank Balances', amount: Math.max(0, cashAndBank) },
-          { account: 'Purchases (COGS)', amount: totalPurchases },
-          { account: 'Operating Expenses', amount: totalExpenses }
-        ],
-        credits: [
-          { account: 'Accounts Payable (Creditors)', amount: accountsPayable },
-          { account: 'Sales Revenue', amount: totalSales },
-          { account: 'Tax Payable (GST)', amount: taxPayable },
-          { account: 'Capital & Retained Earnings', amount: Math.max(0, capital) },
-          { account: 'Overdraft / Negative Cash', amount: cashAndBank < 0 ? Math.abs(cashAndBank) : 0 },
-          { account: 'Capital Deficit', amount: capital < 0 ? Math.abs(capital) : 0 }
-        ]
-      },
-      balanceSheet: {
-        assets: [
-          { account: 'Cash & Bank', amount: Math.max(0, cashAndBank) },
-          { account: 'Accounts Receivable', amount: accountsReceivable },
-          { account: 'Closing Stock', amount: inventory }
-        ],
-        liabilities: [
-          { account: 'Accounts Payable', amount: accountsPayable },
-          { account: 'Tax Payable', amount: taxPayable },
-          { account: 'Overdraft (Negative Cash)', amount: cashAndBank < 0 ? Math.abs(cashAndBank) : 0 }
-        ],
-        equity: [
-          { account: 'Opening Capital (Derived)', amount: capital - netProfit },
-          { account: 'Net Profit / (Loss)', amount: netProfit }
-        ]
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...totals,
+        grossProfit,
+        netProfit,
+        cashAndBank: cashInHand
       }
-    };
-
-    // Filter out 0 amounts for cleaner UI, except for key accounts
-    data.trialBalance.debits = data.trialBalance.debits.filter(d => d.amount !== 0);
-    data.trialBalance.credits = data.trialBalance.credits.filter(c => c.amount !== 0);
-
-    // Calculate Totals
-    data.trialBalance.totalDebit = data.trialBalance.debits.reduce((sum, item) => sum + item.amount, 0);
-    data.trialBalance.totalCredit = data.trialBalance.credits.reduce((sum, item) => sum + item.amount, 0);
-
-    data.balanceSheet.totalAssets = data.balanceSheet.assets.reduce((sum, item) => sum + item.amount, 0);
-    data.balanceSheet.totalLiabilitiesAndEquity =
-      data.balanceSheet.liabilities.reduce((sum, item) => sum + item.amount, 0) +
-      data.balanceSheet.equity.reduce((sum, item) => sum + item.amount, 0);
-
-    return NextResponse.json({ success: true, data });
+    });
   } catch (error) {
     console.error('Accounting API Error:', error);
     return NextResponse.json({ success: false, error: 'Failed to generate accounting reports' }, { status: 500 });

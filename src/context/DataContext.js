@@ -1,6 +1,7 @@
 'use client';
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useNetworkStatus } from './NetworkStatusContext';
+import * as offlineSync from '@/lib/offlineSync';
 
 const DataContext = createContext(null);
 
@@ -16,11 +17,21 @@ const COLLECTION_PATHS = {
   cashTransactions: 'cash/transactions',
 };
 
+// Map collection name to offlineSync cache functions
+const CACHE_FNS = {
+  products: { cache: offlineSync.cacheProducts, get: offlineSync.getCachedProducts },
+  customers: { cache: offlineSync.cacheCustomers, get: offlineSync.getCachedCustomers },
+  suppliers: { cache: offlineSync.cacheSuppliers, get: offlineSync.getCachedSuppliers },
+  expenses: { cache: offlineSync.cacheExpenses, get: offlineSync.getCachedExpenses },
+  purchases: { cache: offlineSync.cachePurchases, get: offlineSync.getCachedPurchases },
+  invoices: { cache: offlineSync.cacheInvoices, get: offlineSync.getCachedInvoices },
+  bankAccounts: { cache: offlineSync.cacheBankAccounts, get: offlineSync.getCachedBankAccounts },
+  bankTransactions: { cache: offlineSync.cacheBankTransactions, get: offlineSync.getCachedBankTransactions },
+  cashTransactions: { cache: offlineSync.cacheCashTransactions, get: offlineSync.getCachedCashTransactions },
+};
+
 /**
- * Global data provider — Local-First SQLite Strategy.
- *
- * All API routes now hit the local SQLite database running in the Node/Electron process.
- * This guarantees 0ms latency and 100% offline uptime without needing IndexedDB caching.
+ * Global data provider — PWA Strategy (Online-First with IndexedDB fallback)
  */
 export function DataProvider({ children }) {
   const { isOnline, lastSyncResult } = useNetworkStatus();
@@ -36,21 +47,45 @@ export function DataProvider({ children }) {
   const [cashTransactions, setCashTransactions] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [lastSynced, setLastSynced] = useState(null);
-  // Names of any collection that failed to load on the most recent
-  // loadAllData() run. Without this, every consumer just rendered its
-  // empty-state UI on a failed fetch — visually indistinguishable from a
-  // store that genuinely has no data yet, e.g. every product/customer
-  // gone, or a P&L report showing all zeros, with nothing telling the
-  // owner it's actually a load failure.
   const [loadErrors, setLoadErrors] = useState([]);
+
+  // Load a single collection from Network (and cache it), fallback to IndexedDB
+  const loadCollection = useCallback(async (name, url, setter) => {
+    try {
+      if (isOnline) {
+        try {
+          const res = await fetch(url);
+          const data = await res.json();
+          if (data.success) {
+            setter(data.data);
+            if (CACHE_FNS[name]) {
+              await CACHE_FNS[name].cache(data.data);
+            }
+            return { success: true };
+          }
+        } catch (err) {
+          console.warn(`[DataContext] Network fetch failed for ${name}, falling back to offline cache.`, err);
+        }
+      }
+      
+      // Fallback to offline cache
+      if (CACHE_FNS[name]) {
+        const cached = await CACHE_FNS[name].get();
+        if (Array.isArray(cached)) {
+          setter(cached);
+          return { success: true, offline: true };
+        }
+      }
+      
+      return { success: false, error: 'Failed to load and no offline cache available.' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }, [isOnline]);
 
   const loadAllData = useCallback(async () => {
     setLoading(true);
 
-    // Each collection is fetched and applied independently — a single
-    // endpoint erroring (e.g. a transient hiccup while the local SQLite
-    // server is still starting up) must not wipe the other five collections
-    // back to empty, which previously happened via a single Promise.all.
     const fetches = [
       ['products', '/api/products', setProducts],
       ['customers', '/api/customers', setCustomers],
@@ -63,101 +98,52 @@ export function DataProvider({ children }) {
       ['cashTransactions', '/api/cash/transactions', setCashTransactions],
     ];
 
-    const results = await Promise.allSettled(
-      fetches.map(([, url]) => fetch(url).then(r => r.json()))
+    const results = await Promise.all(
+      fetches.map(([name, url, setter]) => loadCollection(name, url, setter).then(res => ({ name, res })))
     );
 
-    const failed = [];
-    results.forEach((result, i) => {
-      const [name, , setter] = fetches[i];
-      if (result.status === 'fulfilled' && result.value.success) {
-        setter(result.value.data);
-      } else {
-        failed.push(name);
-        const reason = result.status === 'rejected' ? result.reason : result.value.error;
-        console.error(`[DataContext] Failed to load ${name}:`, reason);
-      }
-    });
-
+    const failed = results.filter(r => !r.res.success).map(r => r.name);
+    
     if (failed.length === 0) {
-      console.log('[DataContext] ⚡ Loaded data from local SQLite database.');
+      console.log(`[DataContext] ⚡ Loaded data ${isOnline ? 'from Cloud API' : 'from Local IDB Cache'}.`);
+    } else {
+      console.error(`[DataContext] Failed to load: ${failed.join(', ')}`);
     }
+
     setLoadErrors(failed);
     setLastSynced(new Date());
     setLoading(false);
-  }, []);
+  }, [loadCollection, isOnline]);
 
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
 
-  // ── Background Sync Engine Trigger ──
-  // Pings the local sync_queue -> MongoDB engine every 15s. If it actually
-  // pushed or pulled anything, our in-memory collections are now stale, so
-  // reload. Previously this fetch's response (and any failure) was silently
-  // discarded, so a broken background sync gave no signal anywhere.
-  useEffect(() => {
-    if (!isOnline) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch('/api/sync');
-        const data = await res.json();
-        if (!data.success) {
-          console.error('[DataContext] Background sync reported failure:', data.error);
-          return;
-        }
-        const upProcessed = data.data?.upSync?.processed || 0;
-        const downSynced = data.data?.downSync?.synced || 0;
-        const stuck = data.data?.upSync?.stuck || 0;
-        if (stuck > 0) {
-          console.error(`[DataContext] ${stuck} local change(s) still stuck un-synced to the cloud.`);
-        }
-        if (upProcessed > 0 || downSynced > 0) {
-          await loadAllData();
-        }
-      } catch (err) {
-        console.error('[DataContext] Background sync ping failed:', err);
-      }
-    }, 15000);
-
-    return () => clearInterval(interval);
-  }, [isOnline, loadAllData]);
-
-  // ── Reload after the offline-invoice queue (IndexedDB -> server) syncs ──
-  // Without this, a queued offline sale only ever appears in Products/Sales/
-  // Customers after a manual full page reload.
+  // Reload after the offline-invoice queue (IndexedDB -> server) syncs
   useEffect(() => {
     if (lastSyncResult && lastSyncResult.synced > 0) {
       loadAllData();
     }
   }, [lastSyncResult, loadAllData]);
 
-  // ── Refresh single collection after a mutation ──
   const refresh = useCallback(async (collection) => {
-    try {
-      const path = COLLECTION_PATHS[collection] || collection;
-      const res = await fetch(`/api/${path}`);
-      const data = await res.json();
-
-      if (!data.success) return;
-
-      const items = data.data;
-      switch (collection) {
-        case 'products':  setProducts(items);  break;
-        case 'customers': setCustomers(items); break;
-        case 'suppliers': setSuppliers(items); break;
-        case 'expenses':  setExpenses(items);  break;
-        case 'purchases': setPurchases(items); break;
-        case 'invoices':  setInvoices(items);  break;
-        case 'bankAccounts':     setBankAccounts(items);     break;
-        case 'bankTransactions': setBankTransactions(items); break;
-        case 'cashTransactions': setCashTransactions(items); break;
-      }
-    } catch (err) {
-      console.error(`[DataContext] Failed to refresh ${collection}:`, err);
+    const path = COLLECTION_PATHS[collection] || collection;
+    let setter = null;
+    switch (collection) {
+      case 'products':  setter = setProducts;  break;
+      case 'customers': setter = setCustomers; break;
+      case 'suppliers': setter = setSuppliers; break;
+      case 'expenses':  setter = setExpenses;  break;
+      case 'purchases': setter = setPurchases; break;
+      case 'invoices':  setter = setInvoices;  break;
+      case 'bankAccounts':     setter = setBankAccounts;     break;
+      case 'bankTransactions': setter = setBankTransactions; break;
+      case 'cashTransactions': setter = setCashTransactions; break;
     }
-  }, []);
+    if (setter) {
+      await loadCollection(collection, `/api/${path}`, setter);
+    }
+  }, [loadCollection]);
 
   return (
     <DataContext.Provider value={{

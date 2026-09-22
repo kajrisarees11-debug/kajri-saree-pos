@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { invoices, IS_CLOUD } from '@/lib/dataAdapter';
+import { invoices } from '@/lib/dataAdapter';
 import dbConnect from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -21,19 +21,14 @@ export async function GET(request) {
 }
 
 async function generateInvoiceNumber() {
-  if (IS_CLOUD) {
-    await dbConnect();
-    const POSInvoice = (await import('@/lib/models/POSInvoice')).default;
-    const count = await POSInvoice.countDocuments();
-    return `INV-${new Date().getFullYear()}-${(count + 1).toString().padStart(4, '0')}`;
-  }
-  const db = require('@/lib/sqlite').default;
-  const count = db.prepare('SELECT COUNT(*) as c FROM invoices').get().c;
+  await dbConnect();
+  const POSInvoice = (await import('@/lib/models/POSInvoice')).default;
+  const count = await POSInvoice.countDocuments();
   return `INV-${new Date().getFullYear()}-${(count + 1).toString().padStart(4, '0')}`;
 }
 
 function isUniqueConstraintError(err) {
-  return err.code === 11000 || err.code === 'SQLITE_CONSTRAINT_UNIQUE';
+  return err.code === 11000;
 }
 
 export async function POST(request) {

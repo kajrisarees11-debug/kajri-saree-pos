@@ -16,16 +16,9 @@ export default function Home() {
           <div className="flex gap-4 items-center">
             <Link 
               href="/dashboard"
-              className="text-sm font-medium text-white/70 hover:text-white transition-colors"
-            >
-              Web Login
-            </Link>
-            <Link 
-              href="https://github.com/kajrisarees11-debug/kajri-saree-pos/releases/latest/download/Kajri.POS.Setup.exe"
               className="text-sm font-medium bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full transition-all flex items-center gap-2"
             >
-              <Download size={16} />
-              <span>Download</span>
+              <span>Open App</span>
             </Link>
           </div>
         </div>
@@ -38,7 +31,7 @@ export default function Home() {
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#C93370] opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-[#C93370]"></span>
           </span>
-          Version 1.0.0 Now Available
+          Version 2.0.0 Now Available
         </div>
         
         <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-6 bg-clip-text text-transparent bg-gradient-to-r from-white via-white/90 to-white/60">
@@ -47,25 +40,17 @@ export default function Home() {
         </h1>
         
         <p className="text-lg md:text-xl text-white/60 max-w-2xl mb-10 leading-relaxed">
-          Lightning-fast offline billing, intelligent inventory syncing, and comprehensive business analytics—all packaged in a beautiful native Windows application.
+          Lightning-fast offline billing, intelligent inventory syncing, and comprehensive business analytics—all packaged in a beautiful Progressive Web App.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
           <Link 
-            href="https://github.com/kajrisarees11-debug/kajri-saree-pos/releases/latest/download/Kajri.POS.Setup.exe"
+            href="/dashboard"
             className="group relative inline-flex items-center justify-center gap-3 px-8 py-4 font-bold text-white transition-all duration-200 bg-[#8B1A4A] rounded-xl hover:bg-[#A32057] hover:shadow-[0_0_40px_rgba(139,26,74,0.4)] hover:-translate-y-1 overflow-hidden"
           >
             <div className="absolute inset-0 w-full h-full -x-100 bg-gradient-to-r from-transparent via-white/20 to-transparent group-hover:animate-shimmer" />
-            <Download size={22} />
-            <span>Download for Windows</span>
-          </Link>
-          
-          <Link 
-            href="/dashboard"
-            className="inline-flex items-center justify-center gap-3 px-8 py-4 font-semibold text-white/90 transition-all duration-200 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 hover:text-white"
-          >
             <LayoutDashboard size={22} />
-            <span>Open Web Version</span>
+            <span>Launch POS</span>
           </Link>
         </div>
 
@@ -83,8 +68,8 @@ export default function Home() {
             <div className="w-12 h-12 rounded-lg bg-[#8B1A4A]/20 flex items-center justify-center text-[#D54381] mb-4">
               <MonitorSmartphone size={24} />
             </div>
-            <h3 className="text-xl font-bold mb-2">Native Desktop App</h3>
-            <p className="text-white/60 text-sm leading-relaxed">A dedicated Windows executable that runs faster and integrates seamlessly with your barcode scanners and thermal printers.</p>
+            <h3 className="text-xl font-bold mb-2">Progressive Web App</h3>
+            <p className="text-white/60 text-sm leading-relaxed">Installs instantly on any device directly from the browser. No hefty downloads, no updates to manage—always fast and up to date.</p>
           </div>
 
           <div className="p-6 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-sm hover:bg-white/10 transition-colors">

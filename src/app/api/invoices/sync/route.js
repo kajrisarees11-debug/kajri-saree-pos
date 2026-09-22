@@ -38,7 +38,11 @@ export async function POST(request) {
         // same idempotencyKey as "already applied" (isNew: false) rather
         // than reapplying stock/balance effects a second time — exactly the
         // dedupe this endpoint needs for a retried sync batch.
-        await invoices.createWithEffects(offlineInvoice);
+        // allowNegativeStock=true: the physical sale happened in the store
+        // regardless of what digital stock shows. We must record the revenue
+        // and ledger effects even if stock would go negative, rather than
+        // permanently blocking the sync queue on every 0-stock sale.
+        await invoices.createWithEffects(offlineInvoice, { allowNegativeStock: true });
         synced++;
       } catch (err) {
         // A legacy queued invoice with no idempotencyKey (from before that

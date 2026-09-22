@@ -17,7 +17,7 @@ const POSCustomerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-POSCustomerSchema.index({ mobileNumber: 1 });
+// mobileNumber is already indexed via unique:true in the schema above.
 POSCustomerSchema.index({ name: 'text' });
 
 export default mongoose.models.POSCustomer || mongoose.model('POSCustomer', POSCustomerSchema);

@@ -60,8 +60,7 @@ const ProductSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-ProductSchema.index({ barcode: 1 });
-ProductSchema.index({ sku: 1 });
-ProductSchema.index({ name: 'text' }); // For text search
+// barcode and sku are already indexed via unique:true in the schema above.
+ProductSchema.index({ name: 'text' }); // text search
 
 export default mongoose.models.Product || mongoose.model('Product', ProductSchema);

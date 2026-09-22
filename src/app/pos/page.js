@@ -608,12 +608,20 @@ export default function POSPage() {
                   <div className="col-span-5">
                     <div className="font-bold text-gray-900 leading-tight">{item.name}</div>
                     <div className="text-xs text-gray-500 mt-1 font-mono">{item.sku}</div>
+                    {/* Stock-exhausted warning: shown when qty billed exceeds digital stock */}
+                    {item.quantity > (item.stock ?? 0) && (
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className="text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded-full leading-none">
+                          ⚠️ Low Stock ({item.stock ?? 0} left)
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className="col-span-2 text-center font-medium">
                     ₹{(item.price || 0).toLocaleString()}
                   </div>
                   <div className="col-span-2 flex items-center justify-center">
-                    <div className="flex items-center border border-gray-300 rounded-md bg-white">
+                    <div className={`flex items-center border rounded-md bg-white ${item.quantity > (item.stock ?? 0) ? 'border-amber-400' : 'border-gray-300'}`}>
                       <button onClick={() => updateQuantity(item._id, -1)} className="px-2 py-1 text-gray-500 hover:text-primary hover:bg-gray-100 rounded-l-md"><Minus className="w-4 h-4" /></button>
                       <input type="number" readOnly value={item.quantity} className="w-10 text-center text-sm font-bold border-x border-gray-300 py-1 outline-none" />
                       <button onClick={() => updateQuantity(item._id, 1)} className="px-2 py-1 text-gray-500 hover:text-primary hover:bg-gray-100 rounded-r-md"><Plus className="w-4 h-4" /></button>

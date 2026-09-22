@@ -14,8 +14,7 @@
 import dbConnect from '@/lib/db';
 import crypto from 'crypto';
 
-// ─── Detect environment ────────────────────────────────────────────────────────
-export const IS_CLOUD = !!(process.env.VERCEL || process.env.USE_MONGODB === 'true');
+export const IS_CLOUD = true;
 
 export function generateObjectId() {
   return crypto.randomBytes(12).toString('hex');
@@ -75,16 +74,6 @@ function pickAllowedFieldsMongo(table, obj) {
   return out;
 }
 
-// ─── Lazy imports ──────────────────────────────────────────────────────────────
-let _sqliteDb = null;
-function getSqlite() {
-  if (!_sqliteDb) {
-    // Dynamic require so Vercel never touches this import path
-    _sqliteDb = require('@/lib/sqlite').default;
-  }
-  return _sqliteDb;
-}
-
 async function getMongo() {
   await dbConnect();
   const [
@@ -126,180 +115,87 @@ function toPlain(doc) {
 // ─── Products ─────────────────────────────────────────────────────────────────
 export const products = {
   async getAll({ search, barcode } = {}) {
-    if (IS_CLOUD) {
-      const { Product } = await getMongo();
-      let query = {};
-      if (barcode) query.barcode = barcode;
-      else if (search) query.$or = [
-        { name: new RegExp(escapeRegex(search), 'i') },
-        { sku: new RegExp(escapeRegex(search), 'i') },
-        { barcode: new RegExp(escapeRegex(search), 'i') },
-      ];
-      const docs = await Product.find(query).sort({ createdAt: -1 }).limit(50).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString(), images: d.images || [] }));
-    } else {
-      const db = getSqlite();
-      let q = 'SELECT * FROM products';
-      const p = [];
-      if (barcode) { q += ' WHERE barcode = ?'; p.push(barcode); }
-      else if (search) { q += ' WHERE name LIKE ? OR sku LIKE ? OR barcode LIKE ?'; p.push(`%${search}%`, `%${search}%`, `%${search}%`); }
-      q += ' ORDER BY createdAt DESC LIMIT 50';
-      return db.prepare(q).all(...p).map(r => ({ ...r, images: r.images ? JSON.parse(r.images) : [] }));
-    }
+    const { Product } = await getMongo();
+    let query = {};
+    if (barcode) query.barcode = barcode;
+    else if (search) query.$or = [
+      { name: new RegExp(escapeRegex(search), 'i') },
+      { sku: new RegExp(escapeRegex(search), 'i') },
+      { barcode: new RegExp(escapeRegex(search), 'i') },
+    ];
+    const docs = await Product.find(query).sort({ createdAt: -1 }).limit(50).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString(), images: d.images || [] }));
   },
 
   async getById(id) {
-    if (IS_CLOUD) {
-      const { Product } = await getMongo();
-      const doc = await Product.findById(id).lean();
-      return doc ? { ...doc, _id: doc._id.toString(), images: doc.images || [] } : null;
-    } else {
-      const db = getSqlite();
-      const r = db.prepare('SELECT * FROM products WHERE _id = ?').get(id);
-      return r ? { ...r, images: r.images ? JSON.parse(r.images) : [] } : null;
-    }
+    const { Product } = await getMongo();
+    const doc = await Product.findById(id).lean();
+    return doc ? { ...doc, _id: doc._id.toString(), images: doc.images || [] } : null;
   },
 
   async create(body) {
     const _id = body._id || generateObjectId();
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { Product } = await getMongo();
-      // pickAllowedFieldsMongo drops the dashboard's free-text `category`
-      // field (e.g. "Saree") here — Mongo's `category` is a real ObjectId
-      // ref shared with a separate storefront app, and passing a plain
-      // string into it throws a CastError on every single create.
-      const doc = await Product.create({ ...pickAllowedFieldsMongo('products', body), _id, createdAt: now, updatedAt: now });
-      return toPlain(doc);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const data = {
-        _id, name: body.name || '', sku: body.sku || null, barcode: body.barcode || null,
-        description: body.description || null, price: body.price || 0,
-        purchasePrice: body.purchasePrice || 0, taxRate: body.taxRate ?? 0, stock: body.stock || 0, minStock: body.minStock || 5,
-        categoryId: body.category || body.categoryId || null, subCategory: body.subCategory || null,
-        supplierId: body.supplierId || null, images: JSON.stringify(body.images || []),
-        fabric: body.fabric || null, colour: body.colour || null, sareeType: body.sareeType || null,
-        brand: body.brand || null, design: body.design || null, status: body.status || 'Active',
-        createdAt: now, updatedAt: now,
-      };
-      const cols = Object.keys(data); const vals = Object.values(data);
-      db.transaction(() => {
-        db.prepare(`INSERT INTO products (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
-        queueSync('INSERT', 'products', _id, data);
-      })();
-      return { ...data, images: body.images || [] };
-    }
+    const { Product } = await getMongo();
+    // pickAllowedFieldsMongo drops the dashboard's free-text `category`
+    // field (e.g. "Saree") here — Mongo's `category` is a real ObjectId
+    // ref shared with a separate storefront app, and passing a plain
+    // string into it throws a CastError on every single create.
+    const doc = await Product.create({ ...pickAllowedFieldsMongo('products', body), _id, createdAt: now, updatedAt: now });
+    return toPlain(doc);
   },
 
   async update(id, body) {
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { Product } = await getMongo();
-      const update = { ...pickAllowedFieldsMongo('products', body), updatedAt: now };
-      const doc = await Product.findByIdAndUpdate(id, update, { new: true }).lean();
-      return doc ? { ...doc, _id: doc._id.toString(), images: doc.images || [] } : null;
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const raw = { ...body };
-      if (raw.images) raw.images = JSON.stringify(raw.images);
-      if (raw.category) { raw.categoryId = raw.category; delete raw.category; }
-      raw.updatedAt = now;
-      const updateData = pickAllowedFields('products', raw);
-      const setClauses = Object.keys(updateData).map(k => `${k} = ?`).join(', ');
-      db.transaction(() => {
-        db.prepare(`UPDATE products SET ${setClauses} WHERE _id = ?`).run(...Object.values(updateData), id);
-        queueSync('UPDATE', 'products', id, updateData);
-      })();
-      const r = db.prepare('SELECT * FROM products WHERE _id = ?').get(id);
-      return r ? { ...r, images: r.images ? JSON.parse(r.images) : [] } : null;
-    }
+    const { Product } = await getMongo();
+    const update = { ...pickAllowedFieldsMongo('products', body), updatedAt: now };
+    const doc = await Product.findByIdAndUpdate(id, update, { new: true }).lean();
+    return doc ? { ...doc, _id: doc._id.toString(), images: doc.images || [] } : null;
   },
 
   async bulkUpdateBarcodes(items) {
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { Product } = await getMongo();
-      const mongoose = (await import('mongoose')).default;
-      const session = await mongoose.startSession();
-      try {
-        await session.withTransaction(async () => {
-          for (const p of items) {
-            await Product.findByIdAndUpdate(p._id, { barcode: p.barcode, updatedAt: now }, { session });
-          }
-        });
-      } finally {
-        await session.endSession();
-      }
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      db.transaction(() => {
+    const { Product } = await getMongo();
+    const mongoose = (await import('mongoose')).default;
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
         for (const p of items) {
-          db.prepare('UPDATE products SET barcode = ?, updatedAt = ? WHERE _id = ?').run(p.barcode, now, p._id);
-          queueSync('UPDATE', 'products', p._id, { barcode: p.barcode, updatedAt: now });
+          await Product.findByIdAndUpdate(p._id, { barcode: p.barcode, updatedAt: now }, { session });
         }
-      })();
+      });
+    } finally {
+      await session.endSession();
     }
   },
 
   async delete(id) {
-    if (IS_CLOUD) {
-      const { Product } = await getMongo();
-      await Product.findByIdAndDelete(id);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      db.transaction(() => {
-        db.prepare('DELETE FROM products WHERE _id = ?').run(id);
-        queueSync('DELETE', 'products', id, {});
-      })();
-    }
+    const { Product } = await getMongo();
+    await Product.findByIdAndDelete(id);
   },
 };
 
 // ─── Customers ────────────────────────────────────────────────────────────────
 export const customers = {
   async getAll({ search, mobile } = {}) {
-    if (IS_CLOUD) {
-      const { POSCustomer } = await getMongo();
-      let query = {};
-      if (mobile) query.mobileNumber = mobile;
-      else if (search) query.$or = [{ name: new RegExp(escapeRegex(search), 'i') }, { mobileNumber: new RegExp(escapeRegex(search), 'i') }];
-      const docs = await POSCustomer.find(query).sort({ createdAt: -1 }).limit(50).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString() }));
-    } else {
-      const db = getSqlite();
-      let q = 'SELECT * FROM customers'; const p = [];
-      if (mobile) { q += ' WHERE mobileNumber = ?'; p.push(mobile); }
-      else if (search) { q += ' WHERE name LIKE ? OR mobileNumber LIKE ?'; p.push(`%${search}%`, `%${search}%`); }
-      q += ' ORDER BY createdAt DESC LIMIT 50';
-      return db.prepare(q).all(...p);
-    }
+    const { POSCustomer } = await getMongo();
+    let query = {};
+    if (mobile) query.mobileNumber = mobile;
+    else if (search) query.$or = [{ name: new RegExp(escapeRegex(search), 'i') }, { mobileNumber: new RegExp(escapeRegex(search), 'i') }];
+    const docs = await POSCustomer.find(query).sort({ createdAt: -1 }).limit(50).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString() }));
   },
 
   async getById(id) {
-    if (IS_CLOUD) {
-      const { POSCustomer } = await getMongo();
-      const doc = await POSCustomer.findById(id).lean();
-      return doc ? { ...doc, _id: doc._id.toString() } : null;
-    } else {
-      const db = getSqlite();
-      return db.prepare('SELECT * FROM customers WHERE _id = ?').get(id) || null;
-    }
+    const { POSCustomer } = await getMongo();
+    const doc = await POSCustomer.findById(id).lean();
+    return doc ? { ...doc, _id: doc._id.toString() } : null;
   },
 
   async findByMobile(mobile) {
-    if (IS_CLOUD) {
-      const { POSCustomer } = await getMongo();
-      const doc = await POSCustomer.findOne({ mobileNumber: mobile }).lean();
-      return doc ? { ...doc, _id: doc._id.toString() } : null;
-    } else {
-      const db = getSqlite();
-      return db.prepare('SELECT * FROM customers WHERE mobileNumber = ?').get(mobile) || null;
-    }
+    const { POSCustomer } = await getMongo();
+    const doc = await POSCustomer.findOne({ mobileNumber: mobile }).lean();
+    return doc ? { ...doc, _id: doc._id.toString() } : null;
   },
 
   // Self-heals the check-then-act race in POST /api/customers (findByMobile
@@ -310,141 +206,58 @@ export const customers = {
   async create(body) {
     const _id = body._id || generateObjectId();
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { POSCustomer } = await getMongo();
-      try {
-        const doc = await POSCustomer.create({ ...pickAllowedFields('customers', body), _id, createdAt: now, updatedAt: now });
-        return toPlain(doc);
-      } catch (err) {
-        if (err.code === 11000 && body.mobileNumber) {
-          const existing = await this.findByMobile(body.mobileNumber);
-          if (existing) return existing;
-        }
-        throw err;
+    const { POSCustomer } = await getMongo();
+    try {
+      const doc = await POSCustomer.create({ ...pickAllowedFields('customers', body), _id, createdAt: now, updatedAt: now });
+      return toPlain(doc);
+    } catch (err) {
+      if (err.code === 11000 && body.mobileNumber) {
+        const existing = await this.findByMobile(body.mobileNumber);
+        if (existing) return existing;
       }
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const data = {
-        _id, name: body.name || '', mobileNumber: body.mobileNumber || null,
-        email: body.email || null, address: body.address || null, city: body.city || null,
-        pincode: body.pincode || null, outstandingBalance: body.outstandingBalance || 0,
-        totalPurchases: body.totalPurchases || 0, gstin: body.gstin || null,
-        customerType: body.customerType || 'Retail', createdAt: now, updatedAt: now,
-      };
-      const cols = Object.keys(data); const vals = Object.values(data);
-      try {
-        db.transaction(() => {
-          db.prepare(`INSERT INTO customers (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
-          queueSync('INSERT', 'customers', _id, data);
-        })();
-      } catch (err) {
-        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' && body.mobileNumber) {
-          const existing = await this.findByMobile(body.mobileNumber);
-          if (existing) return existing;
-        }
-        throw err;
-      }
-      return data;
+      throw err;
     }
   },
 
   async update(id, body) {
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { POSCustomer } = await getMongo();
-      const update = { ...pickAllowedFields('customers', body), updatedAt: now };
-      const doc = await POSCustomer.findByIdAndUpdate(id, update, { new: true }).lean();
-      return doc ? { ...doc, _id: doc._id.toString() } : null;
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const updateData = pickAllowedFields('customers', { ...body, updatedAt: now });
-      const setClauses = Object.keys(updateData).map(k => `${k} = ?`).join(', ');
-      db.transaction(() => {
-        db.prepare(`UPDATE customers SET ${setClauses} WHERE _id = ?`).run(...Object.values(updateData), id);
-        queueSync('UPDATE', 'customers', id, updateData);
-      })();
-      return db.prepare('SELECT * FROM customers WHERE _id = ?').get(id) || null;
-    }
+    const { POSCustomer } = await getMongo();
+    const update = { ...pickAllowedFields('customers', body), updatedAt: now };
+    const doc = await POSCustomer.findByIdAndUpdate(id, update, { new: true }).lean();
+    return doc ? { ...doc, _id: doc._id.toString() } : null;
   },
 };
 
 // ─── Suppliers ────────────────────────────────────────────────────────────────
 export const suppliers = {
   async getAll({ search } = {}) {
-    if (IS_CLOUD) {
-      const { Supplier } = await getMongo();
-      let query = {};
-      if (search) query.$or = [{ name: new RegExp(escapeRegex(search), 'i') }, { contactNumber: new RegExp(escapeRegex(search), 'i') }];
-      const docs = await Supplier.find(query).sort({ createdAt: -1 }).limit(50).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString() }));
-    } else {
-      const db = getSqlite();
-      let q = 'SELECT * FROM suppliers'; const p = [];
-      if (search) { q += ' WHERE name LIKE ? OR contactNumber LIKE ?'; p.push(`%${search}%`, `%${search}%`); }
-      q += ' ORDER BY createdAt DESC LIMIT 50';
-      return db.prepare(q).all(...p);
-    }
+    const { Supplier } = await getMongo();
+    let query = {};
+    if (search) query.$or = [{ name: new RegExp(escapeRegex(search), 'i') }, { contactNumber: new RegExp(escapeRegex(search), 'i') }];
+    const docs = await Supplier.find(query).sort({ createdAt: -1 }).limit(50).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString() }));
   },
 
   async getById(id) {
-    if (IS_CLOUD) {
-      const { Supplier } = await getMongo();
-      const doc = await Supplier.findById(id).lean();
-      return doc ? { ...doc, _id: doc._id.toString() } : null;
-    } else {
-      const db = getSqlite();
-      return db.prepare('SELECT * FROM suppliers WHERE _id = ?').get(id) || null;
-    }
+    const { Supplier } = await getMongo();
+    const doc = await Supplier.findById(id).lean();
+    return doc ? { ...doc, _id: doc._id.toString() } : null;
   },
 
   async create(body) {
     const _id = body._id || generateObjectId();
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { Supplier } = await getMongo();
-      const doc = await Supplier.create({ ...pickAllowedFields('suppliers', body), _id, createdAt: now, updatedAt: now });
-      return toPlain(doc);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const data = {
-        _id, name: body.name || '', contactNumber: body.contactNumber || null,
-        phone: body.phone || null, email: body.email || null, address: body.address || null,
-        city: body.city || null, gstin: body.gstin || null, payableBalance: body.payableBalance || 0,
-        outstandingBalance: body.outstandingBalance || 0, purchaseHistory: body.purchaseHistory || 0,
-        bankName: body.bankName || null, accountNumber: body.accountNumber || null,
-        ifscCode: body.ifscCode || null, upiId: body.upiId || null, notes: body.notes || null,
-        createdAt: now, updatedAt: now,
-      };
-      const cols = Object.keys(data); const vals = Object.values(data);
-      db.transaction(() => {
-        db.prepare(`INSERT INTO suppliers (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
-        queueSync('INSERT', 'suppliers', _id, data);
-      })();
-      return data;
-    }
+    const { Supplier } = await getMongo();
+    const doc = await Supplier.create({ ...pickAllowedFields('suppliers', body), _id, createdAt: now, updatedAt: now });
+    return toPlain(doc);
   },
 
   async update(id, body) {
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { Supplier } = await getMongo();
-      const update = { ...pickAllowedFields('suppliers', body), updatedAt: now };
-      const doc = await Supplier.findByIdAndUpdate(id, update, { new: true }).lean();
-      return doc ? { ...doc, _id: doc._id.toString() } : null;
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const updateData = pickAllowedFields('suppliers', { ...body, updatedAt: now });
-      const setClauses = Object.keys(updateData).map(k => `${k} = ?`).join(', ');
-      db.transaction(() => {
-        db.prepare(`UPDATE suppliers SET ${setClauses} WHERE _id = ?`).run(...Object.values(updateData), id);
-        queueSync('UPDATE', 'suppliers', id, updateData);
-      })();
-      return db.prepare('SELECT * FROM suppliers WHERE _id = ?').get(id) || null;
-    }
+    const { Supplier } = await getMongo();
+    const update = { ...pickAllowedFields('suppliers', body), updatedAt: now };
+    const doc = await Supplier.findByIdAndUpdate(id, update, { new: true }).lean();
+    return doc ? { ...doc, _id: doc._id.toString() } : null;
   },
 };
 
@@ -455,16 +268,9 @@ async function getProductPriceMap(productIds) {
   const ids = [...new Set(productIds.filter(Boolean).map(String))];
   const map = new Map();
   if (ids.length === 0) return map;
-  if (IS_CLOUD) {
-    const { Product } = await getMongo();
-    const docs = await Product.find({ _id: { $in: ids } }, 'price taxRate').lean();
-    for (const d of docs) map.set(d._id.toString(), { price: d.price || 0, taxRate: d.taxRate || 0 });
-  } else {
-    const db = getSqlite();
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = db.prepare(`SELECT _id, price, taxRate FROM products WHERE _id IN (${placeholders})`).all(...ids);
-    for (const r of rows) map.set(r._id, { price: r.price || 0, taxRate: r.taxRate || 0 });
-  }
+  const { Product } = await getMongo();
+  const docs = await Product.find({ _id: { $in: ids } }, 'price taxRate').lean();
+  for (const d of docs) map.set(d._id.toString(), { price: d.price || 0, taxRate: d.taxRate || 0 });
   return map;
 }
 
@@ -551,46 +357,24 @@ function debtReversalForReturn(invoice, refundTotal) {
 export const invoices = {
   async getAll({ page = 1, limit = 20, status, search } = {}) {
     const skip = (page - 1) * limit;
-    if (IS_CLOUD) {
-      const { POSInvoice } = await getMongo();
-      let query = {};
-      if (status) query.status = status;
-      if (search) query.$or = [{ invoiceNumber: new RegExp(escapeRegex(search), 'i') }];
-      const [docs, total] = await Promise.all([
-        POSInvoice.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-        POSInvoice.countDocuments(query),
-      ]);
-      return {
-        data: docs.map(d => ({ ...d, _id: d._id.toString(), items: d.items || [] })),
-        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-      };
-    } else {
-      const db = getSqlite();
-      let q = 'SELECT * FROM invoices'; const p = [];
-      const conditions = [];
-      if (status) { conditions.push('status = ?'); p.push(status); }
-      if (search) { conditions.push('invoiceNumber LIKE ?'); p.push(`%${search}%`); }
-      if (conditions.length) q += ' WHERE ' + conditions.join(' AND ');
-      const total = db.prepare(`SELECT COUNT(*) as count FROM invoices${conditions.length ? ' WHERE ' + conditions.join(' AND ') : ''}`).get(...p)?.count || 0;
-      q += ' ORDER BY createdAt DESC LIMIT ? OFFSET ?';
-      const rows = db.prepare(q).all(...p, limit, skip);
-      return {
-        data: rows.map(r => ({ ...r, items: r.items ? JSON.parse(r.items) : [] })),
-        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-      };
-    }
+    const { POSInvoice } = await getMongo();
+    let query = {};
+    if (status) query.status = status;
+    if (search) query.$or = [{ invoiceNumber: new RegExp(escapeRegex(search), 'i') }];
+    const [docs, total] = await Promise.all([
+      POSInvoice.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      POSInvoice.countDocuments(query),
+    ]);
+    return {
+      data: docs.map(d => ({ ...d, _id: d._id.toString(), items: d.items || [] })),
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    };
   },
 
   async getById(id) {
-    if (IS_CLOUD) {
-      const { POSInvoice } = await getMongo();
-      const doc = await POSInvoice.findById(id).lean();
-      return doc ? { ...doc, _id: doc._id.toString(), items: doc.items || [] } : null;
-    } else {
-      const db = getSqlite();
-      const r = db.prepare('SELECT * FROM invoices WHERE _id = ?').get(id);
-      return r ? { ...r, items: r.items ? JSON.parse(r.items) : [] } : null;
-    }
+    const { POSInvoice } = await getMongo();
+    const doc = await POSInvoice.findById(id).lean();
+    return doc ? { ...doc, _id: doc._id.toString(), items: doc.items || [] } : null;
   },
 
   // If body.idempotencyKey is present and an invoice with that key already
@@ -604,57 +388,23 @@ export const invoices = {
     const _id = body._id || generateObjectId();
     const now = new Date().toISOString();
 
-    if (IS_CLOUD) {
-      const { POSInvoice } = await getMongo();
-      if (body.idempotencyKey) {
+    const { POSInvoice } = await getMongo();
+    if (body.idempotencyKey) {
+      const existing = await POSInvoice.findOne({ idempotencyKey: body.idempotencyKey }).lean();
+      if (existing) return { data: { ...existing, _id: existing._id.toString(), items: existing.items || [] }, isNew: false };
+    }
+    try {
+      const doc = await POSInvoice.create({ ...body, _id, createdAt: now, updatedAt: now });
+      return { data: toPlain(doc), isNew: true };
+    } catch (err) {
+      // Race: two concurrent requests with the same idempotencyKey both
+      // passed the check above. The unique index rejects the loser here —
+      // return the winner's row instead of a spurious 400.
+      if (err.code === 11000 && body.idempotencyKey) {
         const existing = await POSInvoice.findOne({ idempotencyKey: body.idempotencyKey }).lean();
         if (existing) return { data: { ...existing, _id: existing._id.toString(), items: existing.items || [] }, isNew: false };
       }
-      try {
-        const doc = await POSInvoice.create({ ...body, _id, createdAt: now, updatedAt: now });
-        return { data: toPlain(doc), isNew: true };
-      } catch (err) {
-        // Race: two concurrent requests with the same idempotencyKey both
-        // passed the check above. The unique index rejects the loser here —
-        // return the winner's row instead of a spurious 400.
-        if (err.code === 11000 && body.idempotencyKey) {
-          const existing = await POSInvoice.findOne({ idempotencyKey: body.idempotencyKey }).lean();
-          if (existing) return { data: { ...existing, _id: existing._id.toString(), items: existing.items || [] }, isNew: false };
-        }
-        throw err;
-      }
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-
-      if (body.idempotencyKey) {
-        const existing = db.prepare('SELECT * FROM invoices WHERE idempotencyKey = ?').get(body.idempotencyKey);
-        if (existing) return { data: { ...existing, items: existing.items ? JSON.parse(existing.items) : [] }, isNew: false };
-      }
-
-      const data = {
-        _id, invoiceNumber: body.invoiceNumber, idempotencyKey: body.idempotencyKey || null,
-        customerId: body.customerId || null,
-        items: JSON.stringify(body.items || []), subTotal: body.subTotal || 0,
-        taxTotal: body.taxTotal || 0, discountTotal: body.discountTotal || 0,
-        grandTotal: body.grandTotal || 0, paymentMethod: body.paymentMethod || 'Cash',
-        amountPaid: body.amountPaid || 0, balance: body.balance || 0,
-        status: body.status || 'Completed', createdAt: now, updatedAt: now,
-      };
-      const cols = Object.keys(data); const vals = Object.values(data);
-      try {
-        db.transaction(() => {
-          db.prepare(`INSERT INTO invoices (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
-          queueSync('INSERT', 'invoices', _id, data);
-        })();
-      } catch (err) {
-        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' && body.idempotencyKey) {
-          const existing = db.prepare('SELECT * FROM invoices WHERE idempotencyKey = ?').get(body.idempotencyKey);
-          if (existing) return { data: { ...existing, items: existing.items ? JSON.parse(existing.items) : [] }, isNew: false };
-        }
-        throw err;
-      }
-      return { data: { ...data, items: body.items || [] }, isNew: true };
+      throw err;
     }
   },
 
@@ -665,7 +415,7 @@ export const invoices = {
   // Idempotent the same way create() is: a repeat call with the same
   // idempotencyKey returns the original invoice (isNew: false) and applies
   // no side effects again.
-  async createWithEffects(rawBody) {
+  async createWithEffects(rawBody, { allowNegativeStock = false } = {}) {
     const now = new Date().toISOString();
     const body = await recomputeInvoiceTotals(rawBody);
     const items = Array.isArray(body.items) ? body.items : [];
@@ -682,30 +432,46 @@ export const invoices = {
       else if (amountPaid < grandTotal - 0.01) balanceAdded = grandTotal - amountPaid;
     }
 
-    if (IS_CLOUD) {
-      const { POSInvoice, Product, POSCustomer, Ledger } = await getMongo();
-      const mongoose = (await import('mongoose')).default;
+    const { POSInvoice, Product, POSCustomer, Ledger } = await getMongo();
+    const mongoose = (await import('mongoose')).default;
 
-      if (body.idempotencyKey) {
-        const existing = await POSInvoice.findOne({ idempotencyKey: body.idempotencyKey }).lean();
-        if (existing) return { data: { ...existing, _id: existing._id.toString(), items: existing.items || [] }, isNew: false };
-      }
+    if (body.idempotencyKey) {
+      const existing = await POSInvoice.findOne({ idempotencyKey: body.idempotencyKey }).lean();
+      if (existing) return { data: { ...existing, _id: existing._id.toString(), items: existing.items || [] }, isNew: false };
+    }
 
-      const _id = body._id || generateObjectId();
-      const session = await mongoose.startSession();
-      let created;
-      try {
-        await session.withTransaction(async () => {
-          // Preserve the ORIGINAL sale time for an offline-queued invoice
-          // synced later — otherwise every offline sale gets stamped with
-          // whenever connectivity happened to return instead of when it
-          // actually happened, skewing reports for that period.
-          const [doc] = await POSInvoice.create([{ ...body, _id, createdAt: body.createdAt || now, updatedAt: now }], { session });
-          created = doc;
+    const _id = body._id || generateObjectId();
+    const session = await mongoose.startSession();
+    let created;
+    try {
+      await session.withTransaction(async () => {
+        // Preserve the ORIGINAL sale time for an offline-queued invoice
+        // synced later — otherwise every offline sale gets stamped with
+        // whenever connectivity happened to return instead of when it
+        // actually happened, skewing reports for that period.
+        const [doc] = await POSInvoice.create([{ ...body, _id, createdAt: body.createdAt || now, updatedAt: now }], { session });
+        created = doc;
 
-          for (const item of items) {
-            if (item.productId && item.quantity) {
-              // Conditional on stock >= quantity so the update is the
+        for (const item of items) {
+          if (item.productId && item.quantity) {
+            if (allowNegativeStock) {
+              // Offline-sync path: the physical sale already happened in the
+              // store. We MUST record it, even if digital stock is now negative
+              // or the product was deleted. This keeps revenue, ledger, and
+              // customer balance accurate. Stock can be reconciled manually.
+              const productExists = await Product.exists({ _id: item.productId }).session(session);
+              if (productExists) {
+                // Unconditionally decrement — drives stock negative if needed.
+                await Product.findByIdAndUpdate(
+                  item.productId,
+                  { $inc: { stock: -item.quantity }, updatedAt: now },
+                  { session }
+                );
+              }
+              // If product was deleted, skip stock update entirely but still
+              // allow the invoice to be created.
+            } else {
+              // Online path: enforce strict stock floor. The update is the
               // authoritative stock-floor check under real concurrency
               // (the route's own pre-check is only advisory — a second
               // request can still race it between the check and this write).
@@ -721,133 +487,42 @@ export const invoices = {
               }
             }
           }
-
-          if (body.customerId) {
-            await POSCustomer.findByIdAndUpdate(
-              body.customerId,
-              { $inc: { totalPurchases: body.grandTotal || 0, outstandingBalance: balanceAdded }, updatedAt: now },
-              { session }
-            );
-            if (balanceAdded > 0) {
-              await Ledger.create([{
-                _id: generateObjectId(), entityType: 'POSCustomer', entityId: body.customerId,
-                transactionType: 'Debit', amount: balanceAdded,
-                description: `Credit sale against Invoice ${body.invoiceNumber}`,
-                date: now, createdAt: now, updatedAt: now,
-              }], { session });
-            }
-          }
-        });
-      } catch (err) {
-        if (err.code === 11000 && body.idempotencyKey) {
-          const existing = await POSInvoice.findOne({ idempotencyKey: body.idempotencyKey }).lean();
-          if (existing) { await session.endSession(); return { data: { ...existing, _id: existing._id.toString(), items: existing.items || [] }, isNew: false }; }
         }
-        await session.endSession();
-        throw err;
+
+        if (body.customerId) {
+          await POSCustomer.findByIdAndUpdate(
+            body.customerId,
+            { $inc: { totalPurchases: body.grandTotal || 0, outstandingBalance: balanceAdded }, updatedAt: now },
+            { session }
+          );
+          if (balanceAdded > 0) {
+            await Ledger.create([{
+              _id: generateObjectId(), entityType: 'POSCustomer', entityId: body.customerId,
+              transactionType: 'Debit', amount: balanceAdded,
+              description: `Credit sale against Invoice ${body.invoiceNumber}`,
+              date: now, createdAt: now, updatedAt: now,
+            }], { session });
+          }
+        }
+      });
+    } catch (err) {
+      if (err.code === 11000 && body.idempotencyKey) {
+        const existing = await POSInvoice.findOne({ idempotencyKey: body.idempotencyKey }).lean();
+        if (existing) { await session.endSession(); return { data: { ...existing, _id: existing._id.toString(), items: existing.items || [] }, isNew: false }; }
       }
       await session.endSession();
-      return { data: toPlain(created), isNew: true };
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-
-      if (body.idempotencyKey) {
-        const existing = db.prepare('SELECT * FROM invoices WHERE idempotencyKey = ?').get(body.idempotencyKey);
-        if (existing) return { data: { ...existing, items: existing.items ? JSON.parse(existing.items) : [] }, isNew: false };
-      }
-
-      const _id = body._id || generateObjectId();
-      const data = {
-        _id, invoiceNumber: body.invoiceNumber, idempotencyKey: body.idempotencyKey || null,
-        customerId: body.customerId || null,
-        items: JSON.stringify(items), subTotal: body.subTotal || 0, taxTotal: body.taxTotal || 0,
-        discountTotal: body.discountTotal || 0, grandTotal: body.grandTotal || 0,
-        paymentMethod: body.paymentMethod || 'Cash', amountPaid: body.amountPaid || 0,
-        balance: body.balance || 0, status: body.status || 'Completed',
-        // See the matching comment in the Mongo branch above — preserve the
-        // original offline sale time rather than the sync time.
-        createdAt: body.createdAt || now, updatedAt: now,
-      };
-
-      try {
-        db.transaction(() => {
-          const cols = Object.keys(data);
-          db.prepare(`INSERT INTO invoices (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...Object.values(data));
-          queueSync('INSERT', 'invoices', _id, data);
-
-          // Conditional on stock >= quantity — the authoritative stock-floor
-          // check; if 0 rows match, another request already took the stock,
-          // so throw to roll back the whole transaction (invoice included).
-          const updateStock = db.prepare('UPDATE products SET stock = stock - ?, updatedAt = ? WHERE _id = ? AND stock >= ?');
-          for (const item of items) {
-            if (item.productId && item.quantity) {
-              const result = updateStock.run(item.quantity, now, item.productId, item.quantity);
-              if (result.changes === 0) {
-                const err = new Error(`Insufficient stock for product ${item.productId}`);
-                err.code = 'INSUFFICIENT_STOCK';
-                throw err;
-              }
-              queueSync('UPDATE', 'products', item.productId, { $inc: { stock: -item.quantity }, updatedAt: now });
-            }
-          }
-
-          if (body.customerId) {
-            db.prepare(`
-              UPDATE customers SET totalPurchases = totalPurchases + ?,
-              outstandingBalance = outstandingBalance + ?, updatedAt = ? WHERE _id = ?
-            `).run(body.grandTotal || 0, balanceAdded, now, body.customerId);
-            queueSync('UPDATE', 'customers', body.customerId, {
-              $inc: { totalPurchases: body.grandTotal || 0, outstandingBalance: balanceAdded }, updatedAt: now
-            });
-
-            if (balanceAdded > 0) {
-              const ledgerId = generateObjectId();
-              const ledgerRow = {
-                _id: ledgerId, entityType: 'POSCustomer', entityId: body.customerId,
-                transactionType: 'Debit', amount: balanceAdded,
-                description: `Credit sale against Invoice ${body.invoiceNumber}`,
-                date: now, createdAt: now, updatedAt: now,
-              };
-              const lCols = Object.keys(ledgerRow);
-              db.prepare(`INSERT INTO ledgers (${lCols.join(',')}) VALUES (${lCols.map(() => '?').join(',')})`).run(...Object.values(ledgerRow));
-              queueSync('INSERT', 'ledgers', ledgerId, ledgerRow);
-            }
-          }
-        })();
-      } catch (err) {
-        if (err.code === 'SQLITE_CONSTRAINT_UNIQUE' && body.idempotencyKey) {
-          const existing = db.prepare('SELECT * FROM invoices WHERE idempotencyKey = ?').get(body.idempotencyKey);
-          if (existing) return { data: { ...existing, items: existing.items ? JSON.parse(existing.items) : [] }, isNew: false };
-        }
-        throw err;
-      }
-
-      return { data: { ...data, items }, isNew: true };
+      throw err;
     }
+    await session.endSession();
+    return { data: toPlain(created), isNew: true };
   },
 
   async update(id, body) {
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { POSInvoice } = await getMongo();
-      const update = { ...pickAllowedFields('invoices', body), updatedAt: now };
-      const doc = await POSInvoice.findByIdAndUpdate(id, update, { new: true }).lean();
-      return doc ? { ...doc, _id: doc._id.toString(), items: doc.items || [] } : null;
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const raw = { ...body, updatedAt: now };
-      if (raw.items) raw.items = JSON.stringify(raw.items);
-      const updateData = pickAllowedFields('invoices', raw);
-      const setClauses = Object.keys(updateData).map(k => `${k} = ?`).join(', ');
-      db.transaction(() => {
-        db.prepare(`UPDATE invoices SET ${setClauses} WHERE _id = ?`).run(...Object.values(updateData), id);
-        queueSync('UPDATE', 'invoices', id, updateData);
-      })();
-      const r = db.prepare('SELECT * FROM invoices WHERE _id = ?').get(id);
-      return r ? { ...r, items: r.items ? JSON.parse(r.items) : [] } : null;
-    }
+    const { POSInvoice } = await getMongo();
+    const update = { ...pickAllowedFields('invoices', body), updatedAt: now };
+    const doc = await POSInvoice.findByIdAndUpdate(id, update, { new: true }).lean();
+    return doc ? { ...doc, _id: doc._id.toString(), items: doc.items || [] } : null;
   },
 
   // Process a sales return: restore stock, reduce customer balance if Udhaar,
@@ -857,182 +532,99 @@ export const invoices = {
   async processReturn(id, { items, reason, refundTotal = 0 } = {}) {
     const timestamp = new Date().toISOString();
 
-    if (IS_CLOUD) {
-      const mongoose = (await import('mongoose')).default;
-      const { POSInvoice, Product, POSCustomer, Ledger } = await getMongo();
+    const mongoose = (await import('mongoose')).default;
+    const { POSInvoice, Product, POSCustomer, Ledger } = await getMongo();
 
-      const invoice = await POSInvoice.findById(id).lean();
-      if (!invoice) { const e = new Error('Invoice not found'); e.code = 'NOT_FOUND'; throw e; }
-      if (invoice.status === 'Returned') { const e = new Error('Invoice already returned'); e.code = 'ALREADY_RETURNED'; throw e; }
-      const validationError = validateReturnAgainstInvoice(invoice, invoice.items || [], items, refundTotal);
-      if (validationError) { const e = new Error(validationError); e.code = 'INVALID_RETURN'; throw e; }
-      const debtReversal = debtReversalForReturn(invoice, refundTotal);
-
-      const session = await mongoose.startSession();
-      try {
-        await session.withTransaction(async () => {
-          if (Array.isArray(items) && items.length > 0) {
-            for (const item of items) {
-              if (item.returnQty > 0 && item.productId) {
-                await Product.findByIdAndUpdate(item.productId, { $inc: { stock: item.returnQty }, updatedAt: timestamp }, { session });
-              }
-            }
-          }
-          // Reverses whatever customer debt THIS invoice actually created at
-          // sale time (grandTotal - amountPaid, pro-rated by how much of the
-          // sale is being returned) — not just Udhaar-labeled invoices. A
-          // "Cash" sale checked out with amountPaid < grandTotal creates the
-          // exact same kind of debt (see createWithEffects), which a return
-          // must unwind the same way or the customer is left owing money on
-          // goods they no longer have.
-          if (invoice.customerId && debtReversal > 0) {
-            const customer = await POSCustomer.findById(invoice.customerId).session(session);
-            if (customer) {
-              customer.outstandingBalance = Math.max(0, (customer.outstandingBalance || 0) - debtReversal);
-              customer.updatedAt = timestamp;
-              await customer.save({ session });
-            }
-            // Every other balance-affecting event leaves a ledger entry —
-            // this one didn't, which is exactly the kind of gap that makes
-            // a ledger-derived party statement silently drift from the
-            // real (customer.outstandingBalance) balance.
-            await Ledger.create([{
-              _id: generateObjectId(), entityType: 'POSCustomer', entityId: invoice.customerId,
-              transactionType: 'Credit', amount: debtReversal,
-              description: `Return against Invoice ${invoice.invoiceNumber}${reason ? ` — ${reason}` : ''}`,
-              date: timestamp, createdAt: timestamp, updatedAt: timestamp,
-            }], { session });
-          }
-          await POSInvoice.findByIdAndUpdate(id, { status: 'Returned', returnReason: reason || null, refundTotal: refundTotal || 0, updatedAt: timestamp }, { session });
-        });
-      } finally {
-        await session.endSession();
-      }
-
-      const updated = await POSInvoice.findById(id).lean();
-      return { ...updated, _id: updated._id.toString() };
-    }
-
-    const db = getSqlite();
-    const { queueSync } = require('@/lib/sqlite');
-
-    const invoice = db.prepare('SELECT * FROM invoices WHERE _id = ?').get(id);
+    const invoice = await POSInvoice.findById(id).lean();
     if (!invoice) { const e = new Error('Invoice not found'); e.code = 'NOT_FOUND'; throw e; }
     if (invoice.status === 'Returned') { const e = new Error('Invoice already returned'); e.code = 'ALREADY_RETURNED'; throw e; }
-    const invoiceItems = invoice.items ? JSON.parse(invoice.items) : [];
-    const validationError = validateReturnAgainstInvoice(invoice, invoiceItems, items, refundTotal);
+    const validationError = validateReturnAgainstInvoice(invoice, invoice.items || [], items, refundTotal);
     if (validationError) { const e = new Error(validationError); e.code = 'INVALID_RETURN'; throw e; }
     const debtReversal = debtReversalForReturn(invoice, refundTotal);
 
-    db.transaction(() => {
-      if (Array.isArray(items) && items.length > 0) {
-        const updateStock = db.prepare('UPDATE products SET stock = stock + ?, updatedAt = ? WHERE _id = ?');
-        for (const item of items) {
-          if (item.returnQty > 0 && item.productId) {
-            updateStock.run(item.returnQty, timestamp, item.productId);
-            queueSync('UPDATE', 'products', item.productId, { $inc: { stock: item.returnQty }, updatedAt: timestamp });
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        if (Array.isArray(items) && items.length > 0) {
+          for (const item of items) {
+            if (item.returnQty > 0 && item.productId) {
+              await Product.findByIdAndUpdate(item.productId, { $inc: { stock: item.returnQty }, updatedAt: timestamp }, { session });
+            }
           }
         }
-      }
-      if (invoice.customerId && debtReversal > 0) {
-        db.prepare('UPDATE customers SET outstandingBalance = MAX(0, outstandingBalance - ?), updatedAt = ? WHERE _id = ?')
-          .run(debtReversal, timestamp, invoice.customerId);
-        queueSync('UPDATE', 'customers', invoice.customerId, { $inc: { outstandingBalance: -debtReversal }, updatedAt: timestamp });
+        // Reverses whatever customer debt THIS invoice actually created at
+        // sale time (grandTotal - amountPaid, pro-rated by how much of the
+        // sale is being returned) — not just Udhaar-labeled invoices. A
+        // "Cash" sale checked out with amountPaid < grandTotal creates the
+        // exact same kind of debt (see createWithEffects), which a return
+        // must unwind the same way or the customer is left owing money on
+        // goods they no longer have.
+        if (invoice.customerId && debtReversal > 0) {
+          const customer = await POSCustomer.findById(invoice.customerId).session(session);
+          if (customer) {
+            customer.outstandingBalance = Math.max(0, (customer.outstandingBalance || 0) - debtReversal);
+            customer.updatedAt = timestamp;
+            await customer.save({ session });
+          }
+          // Every other balance-affecting event leaves a ledger entry —
+          // this one didn't, which is exactly the kind of gap that makes
+          // a ledger-derived party statement silently drift from the
+          // real (customer.outstandingBalance) balance.
+          await Ledger.create([{
+            _id: generateObjectId(), entityType: 'POSCustomer', entityId: invoice.customerId,
+            transactionType: 'Credit', amount: debtReversal,
+            description: `Return against Invoice ${invoice.invoiceNumber}${reason ? ` — ${reason}` : ''}`,
+            date: timestamp, createdAt: timestamp, updatedAt: timestamp,
+          }], { session });
+        }
+        await POSInvoice.findByIdAndUpdate(id, { status: 'Returned', returnReason: reason || null, refundTotal: refundTotal || 0, updatedAt: timestamp }, { session });
+      });
+    } finally {
+      await session.endSession();
+    }
 
-        const ledgerId = generateObjectId();
-        const ledgerRow = {
-          _id: ledgerId, entityType: 'POSCustomer', entityId: invoice.customerId,
-          transactionType: 'Credit', amount: debtReversal,
-          description: `Return against Invoice ${invoice.invoiceNumber}${reason ? ` — ${reason}` : ''}`,
-          date: timestamp, createdAt: timestamp, updatedAt: timestamp,
-        };
-        const lCols = Object.keys(ledgerRow);
-        db.prepare(`INSERT INTO ledgers (${lCols.join(',')}) VALUES (${lCols.map(() => '?').join(',')})`).run(...Object.values(ledgerRow));
-        queueSync('INSERT', 'ledgers', ledgerId, ledgerRow);
-      }
-      db.prepare('UPDATE invoices SET status = ?, returnReason = ?, refundTotal = ?, updatedAt = ? WHERE _id = ?')
-        .run('Returned', reason || null, refundTotal || 0, timestamp, id);
-      queueSync('UPDATE', 'invoices', id, { status: 'Returned', returnReason: reason || null, refundTotal: refundTotal || 0, updatedAt: timestamp });
-    })();
+    const updated = await POSInvoice.findById(id).lean();
+    return { ...updated, _id: updated._id.toString() };
 
-    return db.prepare('SELECT * FROM invoices WHERE _id = ?').get(id);
+
   },
 };
 
 // ─── Expenses ─────────────────────────────────────────────────────────────────
 export const expenses = {
   async getAll({ from, to } = {}) {
-    if (IS_CLOUD) {
-      const { Expense } = await getMongo();
-      let query = {};
-      if (from || to) {
-        query.date = {};
-        if (from) query.date.$gte = new Date(from);
-        if (to) query.date.$lte = new Date(to);
-      }
-      const docs = await Expense.find(query).sort({ date: -1 }).limit(100).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString() }));
-    } else {
-      const db = getSqlite();
-      let q = 'SELECT * FROM expenses'; const p = [];
-      const conditions = [];
-      if (from) { conditions.push('date >= ?'); p.push(from); }
-      if (to) { conditions.push('date <= ?'); p.push(to); }
-      if (conditions.length) q += ' WHERE ' + conditions.join(' AND ');
-      q += ' ORDER BY date DESC LIMIT 100';
-      return db.prepare(q).all(...p);
+    const { Expense } = await getMongo();
+    let query = {};
+    if (from || to) {
+      query.date = {};
+      if (from) query.date.$gte = new Date(from);
+      if (to) query.date.$lte = new Date(to);
     }
+    const docs = await Expense.find(query).sort({ date: -1 }).limit(100).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString() }));
   },
 
   async create(body) {
     const _id = body._id || generateObjectId();
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { Expense } = await getMongo();
-      const doc = await Expense.create({ ...body, _id, createdAt: now, updatedAt: now });
-      return toPlain(doc);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const data = {
-        _id, date: body.date || now, category: body.category || '',
-        amount: body.amount || 0, paymentMethod: body.paymentMethod || 'Cash',
-        description: body.description || null, referenceNo: body.referenceNo || null,
-        receiptImage: body.receiptImage || null, createdAt: now, updatedAt: now,
-      };
-      const cols = Object.keys(data); const vals = Object.values(data);
-      db.transaction(() => {
-        db.prepare(`INSERT INTO expenses (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
-        queueSync('INSERT', 'expenses', _id, data);
-      })();
-      return data;
-    }
+    const { Expense } = await getMongo();
+    const doc = await Expense.create({ ...body, _id, createdAt: now, updatedAt: now });
+    return toPlain(doc);
   },
 };
 
 // ─── Purchases ────────────────────────────────────────────────────────────────
 export const purchases = {
   async getAll({ from, to } = {}) {
-    if (IS_CLOUD) {
-      const { Purchase } = await getMongo();
-      let query = {};
-      if (from || to) {
-        query.date = {};
-        if (from) query.date.$gte = new Date(from);
-        if (to) query.date.$lte = new Date(to);
-      }
-      const docs = await Purchase.find(query).sort({ date: -1 }).limit(100).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString(), items: d.items || [] }));
-    } else {
-      const db = getSqlite();
-      let q = 'SELECT * FROM purchases'; const p = [];
-      const conditions = [];
-      if (from) { conditions.push('date >= ?'); p.push(from); }
-      if (to) { conditions.push('date <= ?'); p.push(to); }
-      if (conditions.length) q += ' WHERE ' + conditions.join(' AND ');
-      q += ' ORDER BY date DESC LIMIT 100';
-      return db.prepare(q).all(...p).map(r => ({ ...r, items: r.items ? JSON.parse(r.items) : [] }));
+    const { Purchase } = await getMongo();
+    let query = {};
+    if (from || to) {
+      query.date = {};
+      if (from) query.date.$gte = new Date(from);
+      if (to) query.date.$lte = new Date(to);
     }
+    const docs = await Purchase.find(query).sort({ date: -1 }).limit(100).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString(), items: d.items || [] }));
   },
 
   // Creating a purchase receives stock (goods in hand) and, unless paid in
@@ -1045,195 +637,91 @@ export const purchases = {
     const owesSupplier = body.status !== 'Paid';
     const totalAmount = body.totalAmount || 0;
 
-    if (IS_CLOUD) {
-      const { Purchase, Product, Supplier, Ledger } = await getMongo();
-      const mongoose = (await import('mongoose')).default;
-      const session = await mongoose.startSession();
-      let doc;
-      try {
-        await session.withTransaction(async () => {
-          const [created] = await Purchase.create([{ ...body, _id, createdAt: now, updatedAt: now }], { session });
-          doc = created;
+    const { Purchase, Product, Supplier, Ledger } = await getMongo();
+    const mongoose = (await import('mongoose')).default;
+    const session = await mongoose.startSession();
+    let doc;
+    try {
+      await session.withTransaction(async () => {
+        const [created] = await Purchase.create([{ ...body, _id, createdAt: now, updatedAt: now }], { session });
+        doc = created;
 
-          for (const item of items) {
-            if (item.productId && item.quantity) {
-              await Product.findByIdAndUpdate(
-                item.productId,
-                { $inc: { stock: item.quantity }, updatedAt: now },
-                { session }
-              );
-            }
-          }
-
-          if (owesSupplier && body.supplierId && totalAmount > 0) {
-            await Supplier.findByIdAndUpdate(
-              body.supplierId,
-              { $inc: { payableBalance: totalAmount, outstandingBalance: totalAmount }, updatedAt: now },
-              { session }
-            );
-            await Ledger.create([{
-              _id: generateObjectId(), entityType: 'Supplier', entityId: body.supplierId,
-              transactionType: 'Debit', amount: totalAmount,
-              description: `Purchase against ${body.invoiceNumber || _id}`,
-              date: now, createdAt: now, updatedAt: now,
-            }], { session });
-          }
-        });
-      } finally {
-        await session.endSession();
-      }
-      return toPlain(doc);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const data = {
-        _id, supplierId: body.supplierId || null, invoiceNumber: body.invoiceNumber || null,
-        date: body.date || now, items: JSON.stringify(items),
-        totalAmount, status: body.status || 'Completed',
-        notes: body.notes || null, createdAt: now, updatedAt: now,
-      };
-      const cols = Object.keys(data); const vals = Object.values(data);
-
-      db.transaction(() => {
-        db.prepare(`INSERT INTO purchases (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals);
-        queueSync('INSERT', 'purchases', _id, data);
-
-        const updateStock = db.prepare('UPDATE products SET stock = stock + ?, updatedAt = ? WHERE _id = ?');
         for (const item of items) {
           if (item.productId && item.quantity) {
-            updateStock.run(item.quantity, now, item.productId);
-            queueSync('UPDATE', 'products', item.productId, { $inc: { stock: item.quantity }, updatedAt: now });
+            await Product.findByIdAndUpdate(
+              item.productId,
+              { $inc: { stock: item.quantity }, updatedAt: now },
+              { session }
+            );
           }
         }
 
-        if (owesSupplier && data.supplierId && totalAmount > 0) {
-          db.prepare('UPDATE suppliers SET payableBalance = payableBalance + ?, outstandingBalance = outstandingBalance + ?, updatedAt = ? WHERE _id = ?')
-            .run(totalAmount, totalAmount, now, data.supplierId);
-          queueSync('UPDATE', 'suppliers', data.supplierId, { $inc: { payableBalance: totalAmount, outstandingBalance: totalAmount }, updatedAt: now });
-
-          const ledgerId = generateObjectId();
-          const ledgerEntry = {
-            _id: ledgerId, entityType: 'Supplier', entityId: data.supplierId,
+        if (owesSupplier && body.supplierId && totalAmount > 0) {
+          await Supplier.findByIdAndUpdate(
+            body.supplierId,
+            { $inc: { payableBalance: totalAmount, outstandingBalance: totalAmount }, updatedAt: now },
+            { session }
+          );
+          await Ledger.create([{
+            _id: generateObjectId(), entityType: 'Supplier', entityId: body.supplierId,
             transactionType: 'Debit', amount: totalAmount,
-            description: `Purchase against ${data.invoiceNumber || _id}`,
+            description: `Purchase against ${body.invoiceNumber || _id}`,
             date: now, createdAt: now, updatedAt: now,
-          };
-          const lCols = Object.keys(ledgerEntry);
-          db.prepare(`INSERT INTO ledgers (${lCols.join(',')}) VALUES (${lCols.map(() => '?').join(',')})`).run(...Object.values(ledgerEntry));
-          queueSync('INSERT', 'ledgers', ledgerId, ledgerEntry);
+          }], { session });
         }
-      })();
-
-      return { ...data, items };
+      });
+    } finally {
+      await session.endSession();
     }
+    return toPlain(doc);
   },
 };
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 export const settings = {
   async get() {
-    if (IS_CLOUD) {
-      const { StoreConfig } = await getMongo();
-      // Single, well-known store-settings document (there is only ever one).
-      let doc = await StoreConfig.findOne().lean();
-      if (!doc) {
-        doc = (await StoreConfig.create({})).toObject();
-      }
-      return { ...doc, _id: doc._id.toString() };
-    } else {
-      const db = getSqlite();
-      return db.prepare('SELECT * FROM settings LIMIT 1').get() || {
-        storeName: 'Kajri Sarees', invoicePrefix: 'INV-', defaultTaxRate: 0, autoPrint: 0,
-      };
+    const { StoreConfig } = await getMongo();
+    // Single, well-known store-settings document (there is only ever one).
+    let doc = await StoreConfig.findOne().lean();
+    if (!doc) {
+      doc = (await StoreConfig.create({})).toObject();
     }
+    return { ...doc, _id: doc._id.toString() };
   },
 
   async upsert(body) {
-    if (IS_CLOUD) {
-      const { StoreConfig } = await getMongo();
-      const update = pickAllowedFields('settings', body);
-      const doc = await StoreConfig.findOneAndUpdate({}, update, {
-        new: true, upsert: true, setDefaultsOnInsert: true,
-      }).lean();
-      return { ...doc, _id: doc._id.toString() };
-    } else {
-      const db = getSqlite();
-      const now = new Date().toISOString();
-      // mongoSyncUri changed — the cached Mongo connection (module-scoped in
-      // db.js) was resolved from whatever URI was set at the time of the
-      // FIRST sync and never re-checked afterward, so without this, saving a
-      // corrected/repointed URI here would keep silently syncing to the OLD
-      // database until the app is fully restarted.
-      if ('mongoSyncUri' in body) {
-        const { resetDbConnection } = require('@/lib/db');
-        resetDbConnection();
-      }
-      const existing = db.prepare('SELECT _id FROM settings LIMIT 1').get();
-      if (existing) {
-        const updateData = pickAllowedFields('settings', { ...body, updatedAt: now });
-        const setClauses = Object.keys(updateData).map(k => `${k} = ?`).join(', ');
-        db.prepare(`UPDATE settings SET ${setClauses} WHERE _id = ?`).run(...Object.values(updateData), existing._id);
-      } else {
-        const _id = generateObjectId();
-        const data = { _id, ...pickAllowedFields('settings', body), createdAt: now, updatedAt: now };
-        const cols = Object.keys(data);
-        db.prepare(`INSERT INTO settings (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...Object.values(data));
-      }
-      return db.prepare('SELECT * FROM settings LIMIT 1').get();
-    }
+    const { StoreConfig } = await getMongo();
+    const update = pickAllowedFields('settings', body);
+    const doc = await StoreConfig.findOneAndUpdate({}, update, {
+      new: true, upsert: true, setDefaultsOnInsert: true,
+    }).lean();
+    return { ...doc, _id: doc._id.toString() };
   },
 };
 
 // ─── Ledgers ─────────────────────────────────────────────────────────────────
 export const ledgers = {
   async getByEntity(entityId) {
-    if (IS_CLOUD) {
-      const { Ledger } = await getMongo();
-      const docs = await Ledger.find({ entityId }).sort({ date: -1 }).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString() }));
-    } else {
-      const db = getSqlite();
-      return db.prepare('SELECT * FROM ledgers WHERE entityId = ? ORDER BY date DESC').all(entityId);
-    }
+    const { Ledger } = await getMongo();
+    const docs = await Ledger.find({ entityId }).sort({ date: -1 }).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString() }));
   },
 
   async create(body) {
     const _id = body._id || generateObjectId();
     const now = new Date().toISOString();
-    if (IS_CLOUD) {
-      const { Ledger } = await getMongo();
-      const doc = await Ledger.create({ ...body, _id, createdAt: now, updatedAt: now });
-      return toPlain(doc);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const data = {
-        _id, entityType: body.entityType || null, entityId: body.entityId || null,
-        transactionType: body.transactionType || 'Debit', amount: body.amount || 0,
-        description: body.description || null, date: body.date || now,
-        createdAt: now, updatedAt: now,
-      };
-      const cols = Object.keys(data);
-      db.transaction(() => {
-        db.prepare(`INSERT INTO ledgers (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...Object.values(data));
-        queueSync('INSERT', 'ledgers', _id, data);
-      })();
-      return data;
-    }
+    const { Ledger } = await getMongo();
+    const doc = await Ledger.create({ ...body, _id, createdAt: now, updatedAt: now });
+    return toPlain(doc);
   },
 };
 
 // ─── Bank Accounts ──────────────────────────────────────────────────────────────
 export const bankAccounts = {
   async getAll() {
-    if (IS_CLOUD) {
-      const { BankAccount } = await getMongo();
-      const docs = await BankAccount.find({}).sort({ createdAt: -1 }).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString() }));
-    } else {
-      const db = getSqlite();
-      return db.prepare('SELECT * FROM bank_accounts ORDER BY createdAt DESC').all();
-    }
+    const { BankAccount } = await getMongo();
+    const docs = await BankAccount.find({}).sort({ createdAt: -1 }).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString() }));
   },
 
   async create(body) {
@@ -1243,49 +731,23 @@ export const bankAccounts = {
       name: body.name || '', accountNo: body.accountNo || '', ifsc: body.ifsc || '',
       openingBalance: Number(body.openingBalance) || 0,
     };
-    if (IS_CLOUD) {
-      const { BankAccount } = await getMongo();
-      const doc = await BankAccount.create({ ...data, _id, createdAt: now, updatedAt: now });
-      return toPlain(doc);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const row = { _id, ...data, createdAt: now, updatedAt: now };
-      const cols = Object.keys(row);
-      db.transaction(() => {
-        db.prepare(`INSERT INTO bank_accounts (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...Object.values(row));
-        queueSync('INSERT', 'bank_accounts', _id, row);
-      })();
-      return row;
-    }
+    const { BankAccount } = await getMongo();
+    const doc = await BankAccount.create({ ...data, _id, createdAt: now, updatedAt: now });
+    return toPlain(doc);
   },
 
   async delete(id) {
-    if (IS_CLOUD) {
-      const { BankAccount } = await getMongo();
-      await BankAccount.findByIdAndDelete(id);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      db.transaction(() => {
-        db.prepare('DELETE FROM bank_accounts WHERE _id = ?').run(id);
-        queueSync('DELETE', 'bank_accounts', id, {});
-      })();
-    }
+    const { BankAccount } = await getMongo();
+    await BankAccount.findByIdAndDelete(id);
   },
 };
 
 // ─── Bank Transactions (manual receipts/payments not tied to an invoice/expense) ─
 export const bankTransactions = {
   async getAll() {
-    if (IS_CLOUD) {
-      const { BankTransaction } = await getMongo();
-      const docs = await BankTransaction.find({}).sort({ date: -1 }).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString() }));
-    } else {
-      const db = getSqlite();
-      return db.prepare('SELECT * FROM bank_transactions ORDER BY date DESC').all();
-    }
+    const { BankTransaction } = await getMongo();
+    const docs = await BankTransaction.find({}).sort({ date: -1 }).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString() }));
   },
 
   async create(body) {
@@ -1299,35 +761,18 @@ export const bankTransactions = {
       category: body.category || 'Manual',
       date: body.date || now,
     };
-    if (IS_CLOUD) {
-      const { BankTransaction } = await getMongo();
-      const doc = await BankTransaction.create({ ...data, _id, createdAt: now, updatedAt: now });
-      return toPlain(doc);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const row = { _id, ...data, createdAt: now, updatedAt: now };
-      const cols = Object.keys(row);
-      db.transaction(() => {
-        db.prepare(`INSERT INTO bank_transactions (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...Object.values(row));
-        queueSync('INSERT', 'bank_transactions', _id, row);
-      })();
-      return row;
-    }
+    const { BankTransaction } = await getMongo();
+    const doc = await BankTransaction.create({ ...data, _id, createdAt: now, updatedAt: now });
+    return toPlain(doc);
   },
 };
 
 // ─── Cash Transactions ───────────────────────────────────────────────────────────
 export const cashTransactions = {
   async getAll() {
-    if (IS_CLOUD) {
-      const { CashTransaction } = await getMongo();
-      const docs = await CashTransaction.find({}).sort({ date: -1 }).lean();
-      return docs.map(d => ({ ...d, _id: d._id.toString() }));
-    } else {
-      const db = getSqlite();
-      return db.prepare('SELECT * FROM cash_transactions ORDER BY date DESC').all();
-    }
+    const { CashTransaction } = await getMongo();
+    const docs = await CashTransaction.find({}).sort({ date: -1 }).lean();
+    return docs.map(d => ({ ...d, _id: d._id.toString() }));
   },
 
   async create(body) {
@@ -1340,21 +785,9 @@ export const cashTransactions = {
       description: body.description || '',
       date: body.date || now,
     };
-    if (IS_CLOUD) {
-      const { CashTransaction } = await getMongo();
-      const doc = await CashTransaction.create({ ...data, _id, createdAt: now, updatedAt: now });
-      return toPlain(doc);
-    } else {
-      const db = getSqlite();
-      const { queueSync } = require('@/lib/sqlite');
-      const row = { _id, ...data, createdAt: now, updatedAt: now };
-      const cols = Object.keys(row);
-      db.transaction(() => {
-        db.prepare(`INSERT INTO cash_transactions (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...Object.values(row));
-        queueSync('INSERT', 'cash_transactions', _id, row);
-      })();
-      return row;
-    }
+    const { CashTransaction } = await getMongo();
+    const doc = await CashTransaction.create({ ...data, _id, createdAt: now, updatedAt: now });
+    return toPlain(doc);
   },
 };
 

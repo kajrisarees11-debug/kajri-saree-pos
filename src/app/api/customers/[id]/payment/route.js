@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { IS_CLOUD, generateObjectId } from '@/lib/dataAdapter';
+import { generateObjectId } from '@/lib/dataAdapter';
 import dbConnect from '@/lib/db';
 
 /**
@@ -18,101 +18,51 @@ export async function POST(request, { params }) {
 
     const timestamp = new Date().toISOString();
 
-    if (IS_CLOUD) {
-      await dbConnect();
-      const mongoose = (await import('mongoose')).default;
-      const { default: POSCustomer } = await import('@/lib/models/POSCustomer');
-      const { default: Ledger } = await import('@/lib/models/Ledger');
+    await dbConnect();
+    const mongoose = (await import('mongoose')).default;
+    const { default: POSCustomer } = await import('@/lib/models/POSCustomer');
+    const { default: Ledger } = await import('@/lib/models/Ledger');
 
-      const session = await mongoose.startSession();
-      let prevBalance = 0;
-      let newBalance = 0;
-      try {
-        const customer = await POSCustomer.findById(id);
-        if (!customer) {
-          return NextResponse.json({ success: false, error: 'Customer not found' }, { status: 404 });
-        }
-        prevBalance = customer.outstandingBalance || 0;
-        newBalance = Math.max(0, prevBalance - amount);
-        // Record what was actually applied to the balance, not the raw input
-        // — otherwise an overpayment (e.g. an extra zero typed in) leaves the
-        // ledger permanently overstating total payments versus the floored balance.
-        const amountApplied = prevBalance - newBalance;
-        const overpaid = amount - amountApplied;
-
-        await session.withTransaction(async () => {
-          customer.outstandingBalance = newBalance;
-          customer.updatedAt = timestamp;
-          await customer.save({ session });
-
-          await Ledger.create([{
-            _id: generateObjectId(),
-            entityType: 'POSCustomer',
-            entityId: id,
-            transactionType: 'Credit',
-            amount: amountApplied,
-            description: `Payment received (${mode || 'Cash'})${note ? ` — ${note}` : ''}${overpaid > 0 ? ` [overpaid by ${overpaid}, balance was already ${prevBalance}]` : ''}`,
-            date: timestamp,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-          }], { session });
-        });
-      } finally {
-        await session.endSession();
+    const session = await mongoose.startSession();
+    let prevBalance = 0;
+    let newBalance = 0;
+    try {
+      const customer = await POSCustomer.findById(id);
+      if (!customer) {
+        return NextResponse.json({ success: false, error: 'Customer not found' }, { status: 404 });
       }
+      prevBalance = customer.outstandingBalance || 0;
+      newBalance = Math.max(0, prevBalance - amount);
+      // Record what was actually applied to the balance, not the raw input
+      // — otherwise an overpayment (e.g. an extra zero typed in) leaves the
+      // ledger permanently overstating total payments versus the floored balance.
+      const amountApplied = prevBalance - newBalance;
+      const overpaid = amount - amountApplied;
 
-      return NextResponse.json({
-        success: true,
-        data: { customer: id, amountReceived: amount, appliedToBalance: prevBalance - newBalance, previousBalance: prevBalance, newBalance },
+      await session.withTransaction(async () => {
+        customer.outstandingBalance = newBalance;
+        customer.updatedAt = timestamp;
+        await customer.save({ session });
+
+        await Ledger.create([{
+          _id: generateObjectId(),
+          entityType: 'POSCustomer',
+          entityId: id,
+          transactionType: 'Credit',
+          amount: amountApplied,
+          description: `Payment received (${mode || 'Cash'})${note ? ` — ${note}` : ''}${overpaid > 0 ? ` [overpaid by ${overpaid}, balance was already ${prevBalance}]` : ''}`,
+          date: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }], { session });
       });
+    } finally {
+      await session.endSession();
     }
-
-    const db = require('@/lib/sqlite').default;
-    const { queueSync } = require('@/lib/sqlite');
-
-    const customer = db.prepare('SELECT * FROM customers WHERE _id = ?').get(id);
-    if (!customer) {
-      return NextResponse.json({ success: false, error: 'Customer not found' }, { status: 404 });
-    }
-
-    const prevBalance = customer.outstandingBalance || 0;
-    const newBalance = Math.max(0, prevBalance - amount);
-    const amountApplied = prevBalance - newBalance;
-    const overpaid = amount - amountApplied;
-
-    const ledgerId = generateObjectId();
-    const ledgerEntry = {
-      _id: ledgerId,
-      entityType: 'POSCustomer',
-      entityId: id,
-      transactionType: 'Credit',
-      amount: amountApplied,
-      description: `Payment received (${mode || 'Cash'})${note ? ` — ${note}` : ''}${overpaid > 0 ? ` [overpaid by ${overpaid}, balance was already ${prevBalance}]` : ''}`,
-      date: timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp
-    };
-
-    db.transaction(() => {
-      db.prepare('UPDATE customers SET outstandingBalance = ?, updatedAt = ? WHERE _id = ?').run(newBalance, timestamp, id);
-      queueSync('UPDATE', 'customers', id, { outstandingBalance: newBalance, updatedAt: timestamp });
-
-      const ledgerCols = Object.keys(ledgerEntry);
-      const ledgerVals = Object.values(ledgerEntry);
-      const ledgerPlaceholders = ledgerCols.map(() => '?').join(', ');
-      db.prepare(`INSERT INTO ledgers (${ledgerCols.join(', ')}) VALUES (${ledgerPlaceholders})`).run(...ledgerVals);
-      queueSync('INSERT', 'ledgers', ledgerId, ledgerEntry);
-    })();
 
     return NextResponse.json({
       success: true,
-      data: {
-        customer: id,
-        amountReceived: amount,
-        appliedToBalance: amountApplied,
-        previousBalance: prevBalance,
-        newBalance: newBalance,
-      },
+      data: { customer: id, amountReceived: amount, appliedToBalance: prevBalance - newBalance, previousBalance: prevBalance, newBalance },
     });
   } catch (error) {
     console.error('[Customer Payment Error]', error);

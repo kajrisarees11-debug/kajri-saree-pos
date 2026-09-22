@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { IS_CLOUD, generateObjectId } from '@/lib/dataAdapter';
+import { generateObjectId } from '@/lib/dataAdapter';
 import dbConnect from '@/lib/db';
 import { parse } from 'csv-parse/sync';
 
@@ -55,92 +55,41 @@ export async function POST(request) {
     const errors = [];
     const timestamp = new Date().toISOString();
 
-    if (IS_CLOUD) {
-      await dbConnect();
-      const { default: Product } = await import('@/lib/models/Product');
+    await dbConnect();
+    const { default: Product } = await import('@/lib/models/Product');
 
-      for (const row of records) {
-        try {
-          const { name, sku, price, purchasePrice, stock, category, barcode } = readRow(row);
-          if (!name) continue;
+    for (const row of records) {
+      try {
+        const { name, sku, price, purchasePrice, stock, category, barcode } = readRow(row);
+        if (!name) continue;
 
-          let existing = sku ? await Product.findOne({ sku }) : null;
-          if (!existing && barcode) existing = await Product.findOne({ barcode });
+        let existing = sku ? await Product.findOne({ sku }) : null;
+        if (!existing && barcode) existing = await Product.findOne({ barcode });
 
-          if (existing) {
-            existing.name = name;
-            existing.price = price;
-            existing.purchasePrice = purchasePrice;
-            existing.stock = (existing.stock || 0) + stock;
-            existing.categoryId = category;
-            existing.updatedAt = timestamp;
-            await existing.save();
-          } else {
-            await Product.create({
-              _id: generateObjectId(),
-              name, sku: sku || null,
-              barcode: barcode || generateObjectId().slice(0, 13),
-              price, purchasePrice, stock,
-              categoryId: category, status: 'Active',
-              createdAt: timestamp, updatedAt: timestamp,
-            });
-          }
-
-          successCount++;
-        } catch (err) {
-          errors.push(`Row failed: ${err.message}`);
+        if (existing) {
+          existing.name = name;
+          existing.price = price;
+          existing.purchasePrice = purchasePrice;
+          existing.stock = (existing.stock || 0) + stock;
+          existing.categoryId = category;
+          existing.updatedAt = timestamp;
+          await existing.save();
+        } else {
+          await Product.create({
+            _id: generateObjectId(),
+            name, sku: sku || null,
+            barcode: barcode || generateObjectId().slice(0, 13),
+            price, purchasePrice, stock,
+            categoryId: category, status: 'Active',
+            createdAt: timestamp, updatedAt: timestamp,
+          });
         }
+
+        successCount++;
+      } catch (err) {
+        errors.push(`Row failed: ${err.message}`);
       }
-    } else {
-      const db = require('@/lib/sqlite').default;
-      const { queueSync } = require('@/lib/sqlite');
-
-      const findBySku = db.prepare('SELECT * FROM products WHERE sku = ?');
-      const findByBarcode = db.prepare('SELECT * FROM products WHERE barcode = ?');
-      const updateStmt = db.prepare(`
-        UPDATE products SET name=?, price=?, purchasePrice=?, stock=stock+?, categoryId=?, updatedAt=? WHERE _id=?
-      `);
-      const insertStmt = db.prepare(`
-        INSERT INTO products (_id, name, sku, barcode, price, purchasePrice, stock, categoryId, status, createdAt, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Active', ?, ?)
-      `);
-
-      db.transaction(() => {
-        for (const row of records) {
-          try {
-            const parsed = readRow(row);
-            const { name, sku, price, purchasePrice, stock, category } = parsed;
-            if (!name) continue;
-            // Only fall back to a random barcode for a genuinely new product —
-            // never reuse the SKU as a barcode, since that can collide with an
-            // unrelated product's real barcode and silently overwrite it.
-            const barcode = parsed.barcode || Math.floor(1000000000000 + Math.random() * 9000000000000).toString();
-
-            let existing = sku ? findBySku.get(sku) : null;
-            if (!existing && parsed.barcode) existing = findByBarcode.get(parsed.barcode);
-
-            if (existing) {
-              updateStmt.run(name, price, purchasePrice, stock, category, timestamp, existing._id);
-              queueSync('UPDATE', 'products', existing._id, { name, price, purchasePrice, $inc: { stock }, categoryId: category, updatedAt: timestamp });
-            } else {
-              const newId = generateObjectId();
-              insertStmt.run(newId, name, sku || null, barcode, price, purchasePrice, stock, category, timestamp, timestamp);
-              queueSync('INSERT', 'products', newId, { _id: newId, name, sku, barcode, price, purchasePrice, stock, categoryId: category, status: 'Active', createdAt: timestamp, updatedAt: timestamp });
-            }
-
-            successCount++;
-          } catch (err) {
-            errors.push(`Row failed: ${err.message}`);
-          }
-        }
-      })();
     }
-
-    return NextResponse.json({
-      success: true,
-      message: `Successfully imported/updated ${successCount} products.`,
-      errors: errors.length > 0 ? errors : undefined,
-    });
   } catch (error) {
     console.error('[Import API Error]', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });

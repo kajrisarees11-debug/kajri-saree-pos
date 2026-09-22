@@ -11,7 +11,7 @@
 import { openDB } from 'idb';
 
 const DB_NAME = 'kajri_pos_offline';
-const DB_VERSION = 2; // bump version to trigger upgrade for new stores
+const DB_VERSION = 4; // bump version to trigger upgrade for new stores
 
 // All stores (tables) in IndexedDB
 const STORES = {
@@ -21,6 +21,9 @@ const STORES = {
   EXPENSES: 'expenses_cache',
   PURCHASES: 'purchases_cache',
   INVOICES: 'invoices_cache',
+  BANK_ACCOUNTS: 'bank_accounts_cache',
+  BANK_TRANSACTIONS: 'bank_transactions_cache',
+  CASH_TRANSACTIONS: 'cash_transactions_cache',
   OFFLINE_INVOICES: 'offline_invoices',
 };
 
@@ -61,6 +64,21 @@ function getDB() {
       // Invoices/Sales cache
       if (!db.objectStoreNames.contains(STORES.INVOICES)) {
         db.createObjectStore(STORES.INVOICES, { keyPath: '_id' });
+      }
+
+      // Bank Accounts cache
+      if (!db.objectStoreNames.contains(STORES.BANK_ACCOUNTS)) {
+        db.createObjectStore(STORES.BANK_ACCOUNTS, { keyPath: '_id' });
+      }
+
+      // Bank Transactions cache
+      if (!db.objectStoreNames.contains(STORES.BANK_TRANSACTIONS)) {
+        db.createObjectStore(STORES.BANK_TRANSACTIONS, { keyPath: '_id' });
+      }
+
+      // Cash Transactions cache
+      if (!db.objectStoreNames.contains(STORES.CASH_TRANSACTIONS)) {
+        db.createObjectStore(STORES.CASH_TRANSACTIONS, { keyPath: '_id' });
       }
 
       // Offline invoices queue: auto-increment key
@@ -222,6 +240,57 @@ export async function cacheInvoices(invoices) {
 export async function getCachedInvoices() {
   const db = await getDB();
   return db.getAll(STORES.INVOICES);
+}
+
+// ─────────────────────────────────────────────
+// BANK ACCOUNTS CACHE
+// ─────────────────────────────────────────────
+
+export async function cacheBankAccounts(accounts) {
+  const db = await getDB();
+  const tx = db.transaction(STORES.BANK_ACCOUNTS, 'readwrite');
+  await tx.store.clear();
+  for (const a of accounts) await tx.store.put(a);
+  await tx.done;
+}
+
+export async function getCachedBankAccounts() {
+  const db = await getDB();
+  return db.getAll(STORES.BANK_ACCOUNTS);
+}
+
+// ─────────────────────────────────────────────
+// BANK TRANSACTIONS CACHE
+// ─────────────────────────────────────────────
+
+export async function cacheBankTransactions(transactions) {
+  const db = await getDB();
+  const tx = db.transaction(STORES.BANK_TRANSACTIONS, 'readwrite');
+  await tx.store.clear();
+  for (const t of transactions) await tx.store.put(t);
+  await tx.done;
+}
+
+export async function getCachedBankTransactions() {
+  const db = await getDB();
+  return db.getAll(STORES.BANK_TRANSACTIONS);
+}
+
+// ─────────────────────────────────────────────
+// CASH TRANSACTIONS CACHE
+// ─────────────────────────────────────────────
+
+export async function cacheCashTransactions(transactions) {
+  const db = await getDB();
+  const tx = db.transaction(STORES.CASH_TRANSACTIONS, 'readwrite');
+  await tx.store.clear();
+  for (const t of transactions) await tx.store.put(t);
+  await tx.done;
+}
+
+export async function getCachedCashTransactions() {
+  const db = await getDB();
+  return db.getAll(STORES.CASH_TRANSACTIONS);
 }
 
 // ─────────────────────────────────────────────

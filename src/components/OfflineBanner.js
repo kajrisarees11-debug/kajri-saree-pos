@@ -21,7 +21,7 @@ export default function OfflineBanner() {
   // successfully" message instead of the current, more important OFFLINE state.
   if (!isOnline) {
     return (
-      <div className="fixed top-0 left-0 right-0 z-[100] bg-orange-600 text-white px-4 py-2.5 flex items-center justify-between shadow-lg">
+      <div className="relative z-50 bg-orange-600 text-white px-4 py-2.5 flex items-center justify-between shadow-md shrink-0 w-full">
         <div className="flex items-center gap-2 text-sm font-medium">
           <WifiOff className="w-4 h-4" />
           <span>⚠️ OFFLINE MODE — Billing is active. Bills are saved locally and will sync when internet reconnects.</span>
@@ -38,7 +38,7 @@ export default function OfflineBanner() {
   // Syncing spinner (while pushing pending bills)
   if (isSyncing) {
     return (
-      <div className="fixed top-0 left-0 right-0 z-[100] bg-blue-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-medium shadow-lg">
+      <div className="relative z-50 bg-blue-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-medium shadow-md shrink-0 w-full">
         <RefreshCw className="w-4 h-4 animate-spin" />
         Syncing {pendingCount} pending {pendingCount === 1 ? 'bill' : 'bills'} to the cloud...
       </div>
@@ -50,7 +50,7 @@ export default function OfflineBanner() {
   if (showSyncToast && lastSyncResult) {
     if (lastSyncResult.failed > 0) {
       return (
-        <div className="fixed top-0 left-0 right-0 z-[100] bg-red-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-medium shadow-lg animate-slide-down">
+        <div className="relative z-50 bg-red-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-medium shadow-md shrink-0 w-full">
           <AlertTriangle className="w-4 h-4" />
           ⚠️ {lastSyncResult.failed} offline {lastSyncResult.failed === 1 ? 'bill' : 'bills'} failed to sync and will retry — check the console for details.
         </div>
@@ -58,7 +58,7 @@ export default function OfflineBanner() {
     }
     if (lastSyncResult.synced > 0) {
       return (
-        <div className="fixed top-0 left-0 right-0 z-[100] bg-green-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-medium shadow-lg animate-slide-down">
+        <div className="relative z-50 bg-green-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-medium shadow-md shrink-0 w-full">
           <CheckCircle2 className="w-4 h-4" />
           ✅ {lastSyncResult.synced} offline {lastSyncResult.synced === 1 ? 'bill' : 'bills'} synced to the cloud successfully!
         </div>
@@ -69,7 +69,7 @@ export default function OfflineBanner() {
   // Pending bills badge when back online (before sync fires)
   if (pendingCount > 0 && !isSyncing) {
     return (
-      <div className="fixed top-0 left-0 right-0 z-[100] bg-yellow-500 text-white px-4 py-2.5 flex items-center justify-between shadow-lg">
+      <div className="relative z-50 bg-yellow-500 text-white px-4 py-2.5 flex items-center justify-between shadow-md shrink-0 w-full">
         <div className="flex items-center gap-2 text-sm font-medium">
           <CloudOff className="w-4 h-4" />
           <span>{pendingCount} offline {pendingCount === 1 ? 'bill' : 'bills'} pending cloud sync.</span>

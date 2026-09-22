@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { settings, IS_CLOUD } from '@/lib/dataAdapter';
+import { settings } from '@/lib/dataAdapter';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +16,7 @@ export async function GET() {
     // whether to show the desktop-only "Cloud Sync" section.
     return NextResponse.json({
       success: true,
-      data: { ...data, isCloud: IS_CLOUD, mongoSyncUriConfigured: !!mongoSyncUri },
+      data: { ...data, isCloud: true, mongoSyncUriConfigured: !!mongoSyncUri },
     });
   } catch (error) {
     console.error('API Error [settings GET]:', error);
